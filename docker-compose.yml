@@ -1,0 +1,68 @@
+services:
+  db:
+    image: postgis/postgis:18-3.6
+    # No arm64 image is published for postgis/postgis yet (checked
+    # 2026-09-14); Docker Desktop emulates amd64 via Rosetta on Apple
+    # Silicon. Drop this line once an arm64 build ships.
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: viatuta
+      POSTGRES_USER: viatuta
+      POSTGRES_PASSWORD: viatuta
+    ports:
+      # Host 5433, not 5432: a local Postgres install binds 127.0.0.1:5432,
+      # which shadows this container's wildcard bind on that port. Tools on
+      # the host then silently reach the local server instead and report
+      # `role "viatuta" does not exist`, which looks like a broken container.
+      # The api service is unaffected either way — it reaches the database as
+      # db:5432 over the compose network, not through this mapping.
+      - "5433:5432"
+    volumes:
+      # Postgres 18+ images store data under /var/lib/postgresql itself
+      # (pg_ctlcluster-style, major-version-namespaced) rather than the old
+      # .../data subdirectory — mounting at .../data breaks startup.
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U viatuta -d viatuta"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      VIATUTA_ADDR: ":8080"
+      VIATUTA_DATABASE_URL: "postgres://viatuta:viatuta@db:5432/viatuta?sslmode=disable"
+      VIATUTA_ENV: development
+      VIATUTA_LOG_LEVEL: info
+      VIATUTA_JWT_SECRET: dev-only-do-not-use-in-production
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # One-off operator CLI: ingest OSM data and score edges. Not started by
+  # `docker compose up` (see `profiles`) — invoke with `docker compose run`,
+  # e.g.:
+  #   docker compose run --rm cli /app/viatuta ingest-osm --input /app/data/austin.osm.pbf
+  #   docker compose run --rm cli /app/viatuta score-edges
+  #   docker compose run --rm cli /app/viatuta graph-stats
+  # Restart the api service afterwards — the graph is only loaded at startup.
+  cli:
+    build: .
+    profiles: ["tools"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      VIATUTA_DATABASE_URL: "postgres://viatuta:viatuta@db:5432/viatuta?sslmode=disable"
+      VIATUTA_LOG_LEVEL: info
+    volumes:
+      - ./data:/app/data
+    entrypoint: ["/app/docker-entrypoint.sh"]
+    command: ["/app/viatuta", "graph-stats"]
+
+volumes:
+  db-data:

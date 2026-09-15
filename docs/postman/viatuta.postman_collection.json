@@ -1,0 +1,949 @@
+{
+  "info": {
+    "_postman_id": "6f2a9b3e-9c2d-4f7a-8e2a-3b1c7d9a4e10",
+    "name": "Viatuta API",
+    "description": "Viatuta is a cycling route planner that optimises for **safety first**, not distance or time. This collection covers every HTTP endpoint currently wired into the server (`internal/httpapi/server.go`).\n\n**Current surface (Phase 1-4):**\n- `GET /healthz` — liveness probe\n- `GET /readyz` — readiness probe (DB + routing graph)\n- `POST /v1/route/plan` — compute a safety-optimised route\n\nAccounts, saved routes, and hazard reports (Phases 5-6) are stubbed out in the router source as commented-out routes and are **not yet live** — see the \"Planned (not yet implemented)\" folder for what's coming, kept here so this collection stays a complete map of the API surface as it grows.\n\n### Error shape\nEvery failure returns the same JSON envelope (`internal/httpapi/errors.go`):\n```json\n{\n  \"code\": \"bad_request\",\n  \"message\": \"human-readable explanation\",\n  \"details\": { \"field\": \"what's wrong with it\" }\n}\n```\n`code` is one of: `bad_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`, `internal_error`, `unroutable`.\n\n### Rider profiles\n`profile` selects a built-in weighting for the cost function (`internal/safety/profile.go`):\n\n| Profile | max_lts | stress_budget_m | max_detour_ratio | Character |\n|---|---|---|---|---|\n| `cautious` | 2 | 400 | 2.5 | Riding with children. Refuses anything above LTS 2 except brief forced crossings; will detour far for physical separation. |\n| `comfortable` (default) | 3 | 800 | 1.8 | Prefers bike facilities, tolerates quiet streets, avoids arterials without a bike lane. |\n| `confident` | 4 | 2000 | — | Will take a painted bike lane on an arterial to save real time. |\n| `shortest` | 4 | 0 | 1.0 | Pure distance routing — the baseline every other profile is measured against. |\n\nPass `custom` instead of (or alongside) `profile` to override every weight per-request — no redeploy needed.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "description": "Base URL of a running `make run` instance. Default listen address is `:8080` (`VIATUTA_ADDR` env var, see internal/config/config.go)."
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "description": "JWT for the Planned folder's auth-gated requests. Unused until Phase 6 auth endpoints are implemented."
+    }
+  ],
+  "item": [
+    {
+      "name": "Operational",
+      "description": "Health and readiness checks. Neither requires auth or a body.",
+      "item": [
+        {
+          "name": "Liveness — Healthz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            },
+            "description": "Reports that the process is alive and able to handle HTTP at all.\n\nDeliberately does **not** check the database or routing graph — a liveness probe answers \"should this process be restarted?\", and restarting the API will not fix a down database, it will just add an outage. Use `/readyz` for dependency checks.\n\n**No parameters.**\n\nResponse fields:\n- `status` — always `\"ok\"` if the process responded at all.\n- `uptime` — Go duration string since process start, e.g. `\"42s\"`."
+          },
+          "response": [
+            {
+              "name": "200 OK — alive",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/healthz",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "healthz"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": \"ok\",\n  \"uptime\": \"42s\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Readiness — Readyz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/readyz",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "readyz"
+              ]
+            },
+            "description": "Reports whether the process can actually serve traffic: pings the database and checks that the in-memory routing graph has finished loading. Use this as the target for a Kubernetes/load-balancer readiness probe — send traffic only once this returns 200.\n\n**No parameters.**\n\nResponse fields:\n- `status` — `\"ok\"`, `\"starting\"` (graph still loading), or `\"degraded\"` (database unreachable).\n- `uptime` — Go duration string since process start.\n- `database` — `\"ok\"` or `\"unreachable\"`.\n- `graph` — `\"ok\"` or `\"not loaded\"`.\n- `nodes` / `edges` — size of the loaded routing graph (only present once loaded), from `make ingest`."
+          },
+          "response": [
+            {
+              "name": "200 OK — ready",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/readyz",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "readyz"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": \"ok\",\n  \"uptime\": \"5m12s\",\n  \"database\": \"ok\",\n  \"graph\": \"ok\",\n  \"nodes\": 175000,\n  \"edges\": 412000\n}"
+            },
+            {
+              "name": "503 Service Unavailable — graph still loading",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/readyz",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "readyz"
+                  ]
+                }
+              },
+              "status": "Service Unavailable",
+              "code": 503,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": \"starting\",\n  \"uptime\": \"1s\",\n  \"database\": \"ok\",\n  \"graph\": \"not loaded\"\n}"
+            },
+            {
+              "name": "503 Service Unavailable — database unreachable",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/readyz",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "readyz"
+                  ]
+                }
+              },
+              "status": "Service Unavailable",
+              "code": 503,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": \"degraded\",\n  \"uptime\": \"5m12s\",\n  \"database\": \"unreachable\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Routing",
+      "description": "The core product: computing a safety-optimised bicycle route between waypoints.",
+      "item": [
+        {
+          "name": "Plan Route — Comfortable (default profile)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"profile\": \"comfortable\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "Computes a route through the requested waypoints using the built-in `comfortable` profile — the default if `profile` is omitted entirely. Coverage is Austin, TX only.\n\n**Body parameters** (`internal/httpapi/route_handler.go: PlanRequest`):\n- `waypoints` (required, array of `{lat, lon}`, 2-10 points) — the origin, any via points, and the destination in order. Each point is snapped to the nearest rideable road; `-90<=lat<=90`, `-180<=lon<=180`.\n- `profile` (optional string) — one of `cautious`, `comfortable` (default), `confident`, `shortest`. Ignored if `custom` is set.\n- `custom` (optional object) — a full weight override; see the \"Custom Profile\" request in this folder for its shape. Mutually exclusive in effect with `profile` (custom wins if present).\n- `night` (optional bool, default `false`) — enables the lighting penalty for unlit roads, on top of whichever profile/custom weights are used.\n\nA 3+ waypoint request is planned leg-by-leg (waypoint 1→2, 2→3, ...); the per-leg results are concatenated, and note the stress budget applies **per leg**, not across the whole trip.\n\n**Response: `segments`**\nAlongside the flat `geometry` LineString, the response carries a `segments` array saying WHERE each of the `breakdown` distances happened. Each entry is a run of consecutive roads sharing the same traffic stress and facility type:\n- `start` / `end` index `geometry.coordinates`. `end` is **inclusive** and equals the next segment's `start` — consecutive runs share that junction vertex, so slice `[start, end+1]` to get polylines that join up.\n- `lts` is 1-4, or 0 for a road `viatuta score-edges` has not classified. Note this is a NUMBER, whereas `breakdown.by_lts_m` uses string keys (`lts3`).\n- `infra` uses the same vocabulary as `breakdown.by_infra_m` keys.\n- `length_m` sums the roads in the run; the segment totals per `lts` agree with `breakdown.by_lts_m` to within rounding.\n\nRuns are merged rather than emitted one per edge — a 97-edge route typically collapses to a handful of segments."
+          },
+          "response": [
+            {
+              "name": "200 OK — route computed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"profile\": \"comfortable\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/v1/route/plan",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "route",
+                    "plan"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"geometry\": {\n    \"type\": \"LineString\",\n    \"coordinates\": [\n      [-97.7404, 30.2747],\n      [-97.7421, 30.2718],\n      [-97.7729, 30.2669]\n    ]\n  },\n  \"distance_m\": 4180.6,\n  \"duration_s\": 1003,\n  \"cost\": 4802.3,\n  \"safety_score\": 71.4,\n  \"breakdown\": {\n    \"lts1_m\": 1200.5,\n    \"lts2_m\": 1800.0,\n    \"lts3_m\": 980.1,\n    \"lts4_m\": 200.0,\n    \"protected_m\": 900.0,\n    \"bike_lane_m\": 1600.0,\n    \"shared_m\": 1680.6\n  },\n  \"stress_budget_m\": 800,\n  \"stress_budget_used_m\": 200,\n  \"baseline_distance_m\": 3650.2,\n  \"baseline_safety_score\": 48.9,\n  \"detour_ratio\": 1.15,\n  \"profile\": {\n    \"name\": \"comfortable\",\n    \"max_lts\": 3,\n    \"stress_budget_m\": 800,\n    \"weight_lts\": 1.0,\n    \"weight_crash\": 1.0,\n    \"weight_grade\": 1.0,\n    \"weight_surface\": 1.0,\n    \"weight_light\": 1.0,\n    \"weight_turn\": 1.0,\n    \"max_detour_ratio\": 1.8,\n    \"night\": false\n  },\n  \"snapped\": [\n    { \"requested\": { \"lat\": 30.2747, \"lon\": -97.7404 }, \"distance_m\": 4.2, \"road_name\": \"E 6th St\" },\n    { \"requested\": { \"lat\": 30.2669, \"lon\": -97.7729 }, \"distance_m\": 6.8, \"road_name\": \"S Lamar Blvd\" }\n  ],\n  \"edge_count\": 87,\n  \"compute_ms\": 14\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "Plan Route — Cautious profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"profile\": \"cautious\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "The `cautious` built-in profile: modelled on riding with children. `max_lts: 2`, `stress_budget_m: 400` — it will accept a long detour (`max_detour_ratio: 2.5`) in exchange for physical separation from traffic, and only tolerates 400m total above LTS 2 across the route (e.g. one bad block, not ten).\n\nSame body shape as the default request; only `profile` differs. Expect a longer, safer, more circuitous `geometry` and a higher `detour_ratio` than `comfortable` for the same waypoints."
+          },
+          "response": []
+        },
+        {
+          "name": "Plan Route — Confident profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"profile\": \"confident\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "The `confident` built-in profile: an experienced rider who will take a painted bike lane on an arterial to save real time. `max_lts: 4`, `stress_budget_m: 2000`, low weights across the board so the cost function stays close to raw distance while still preferring safer edges when they're roughly as direct."
+          },
+          "response": []
+        },
+        {
+          "name": "Plan Route — Shortest (distance-only baseline)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"profile\": \"shortest\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "The `shortest` built-in profile: pure distance routing, ignoring safety entirely (`max_detour_ratio: 1.0`, no stress budget, all weights zero). This is the same distance-only search the server internally uses to compute `baseline_distance_m` / `baseline_safety_score` / `detour_ratio` for every other profile's response — request it directly to see that baseline as the primary route."
+          },
+          "response": []
+        },
+        {
+          "name": "Plan Route — Custom profile (per-request weights)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"custom\": {\n    \"name\": \"my-tuned-profile\",\n    \"max_lts\": 3,\n    \"stress_budget_m\": 600,\n    \"weight_lts\": 1.2,\n    \"weight_crash\": 2.0,\n    \"weight_grade\": 0.5,\n    \"weight_surface\": 0.8,\n    \"weight_light\": 1.0,\n    \"weight_turn\": 0.8,\n    \"max_detour_ratio\": 2.0\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "Overrides every cost-function weight for this single request — no redeploy, no built-in profile needed. If `custom` is present, `profile` is ignored (`internal/httpapi/route_handler.go: resolveProfile`).\n\n**`custom` fields** (`internal/safety/profile.go: Profile`), all required unless noted:\n- `name` (optional string) — a label for the response's echoed `profile.name`; defaults to `\"custom\"` if omitted.\n- `max_lts` (int, 1-4) — the highest Level of Traffic Stress this rider will use *without* dipping into the stress budget. LTS1 = protected/quiet, LTS4 = arterial with no separation.\n- `stress_budget_m` (float, meters, >= 0) — total distance above `max_lts` tolerated across the whole route. `0` makes `max_lts` a hard wall — the router will report `unroutable` rather than ever crossing it.\n- `weight_lts` (float, >= 0) — multiplier on traffic-stress cost. Higher = stronger preference for low-stress roads.\n- `weight_crash` (float, >= 0) — multiplier on historical crash-pressure cost for an edge.\n- `weight_grade` (float, >= 0) — multiplier on hill/elevation-grade cost.\n- `weight_surface` (float, >= 0) — multiplier on road-surface-quality cost (e.g. gravel vs. pavement).\n- `weight_light` (float, >= 0) — multiplier on the unlit-road penalty; only has an effect when `night: true` (or the top-level `night` request field is set).\n- `weight_turn` (float, >= 0) — multiplier on turn cost (unprotected left turns, crossing traffic, etc.).\n- `max_detour_ratio` (float) — only used to decide whether to attach a `warnings` message on the response; does not affect routing itself.\n- `night` (optional bool) — same effect as the top-level `night` field; the two are OR'd together.\n\nAll weights must be `>= 0` (a negative weight would make an edge cheaper than its own length, breaking the router's invariants) and `max_lts` must be in `[1,4]`, or the server responds `400 bad_request`."
+          },
+          "response": []
+        },
+        {
+          "name": "Plan Route — Night riding",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"profile\": \"comfortable\",\n  \"night\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "`night: true` turns on the lighting penalty (weighted by `weight_light`) on top of whichever profile is selected, biasing the route toward lit roads. Combine with any `profile` or `custom` body — it's an independent flag, not a profile of its own."
+          },
+          "response": []
+        },
+        {
+          "name": "Plan Route — Multi-waypoint trip",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2711, \"lon\": -97.7546 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"profile\": \"comfortable\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "`waypoints` accepts 2-10 points; anything beyond origin/destination is a via point the route is forced through. Each consecutive pair (1→2, 2→3, ...) is routed as an independent leg and concatenated (`internal/httpapi/route_handler.go: routeLegs`) — meaning the stress budget resets per leg. `snapped` in the response will contain one entry per waypoint, in order, so you can see how far each requested point was moved to reach a rideable road."
+          },
+          "response": []
+        },
+        {
+          "name": "Plan Route — Error: too few waypoints (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "Demonstrates the validation error returned when fewer than 2 waypoints are supplied — an origin and destination are both required (`internal/httpapi/route_handler.go: validWaypoints`)."
+          },
+          "response": [
+            {
+              "name": "400 Bad Request — waypoints",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/v1/route/plan",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "route",
+                    "plan"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"code\": \"bad_request\",\n  \"message\": \"at least two waypoints are required\",\n  \"details\": {\n    \"waypoints\": \"provide an origin and a destination\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Plan Route — Error: unknown profile (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"profile\": \"reckless\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "Demonstrates the error returned for a `profile` value that isn't one of `cautious`, `comfortable`, `confident`, `shortest` (`internal/safety/profile.go: ProfileByName`)."
+          },
+          "response": [
+            {
+              "name": "400 Bad Request — profile",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"profile\": \"reckless\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/v1/route/plan",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "route",
+                    "plan"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"code\": \"bad_request\",\n  \"message\": \"unknown profile\",\n  \"details\": {\n    \"profile\": \"unknown profile \\\"reckless\\\" (want cautious, comfortable, confident or shortest)\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Plan Route — Error: no route within stress budget (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"custom\": {\n    \"name\": \"impossible\",\n    \"max_lts\": 1,\n    \"stress_budget_m\": 0,\n    \"weight_lts\": 1.0,\n    \"weight_crash\": 1.0,\n    \"weight_grade\": 1.0,\n    \"weight_surface\": 1.0,\n    \"weight_light\": 1.0,\n    \"weight_turn\": 1.0,\n    \"max_detour_ratio\": 1.0\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "`max_lts: 1` with `stress_budget_m: 0` makes LTS1 a hard wall — no crossing of any higher-stress edge is permitted at all. If no all-LTS1 path connects the waypoints (common in Austin, where the low-stress network is islanded by arterials), the router returns `422 unroutable` instead of silently relaxing the constraint. This is the deliberate design described in the README: a rider who set a stress budget must never be handed an arterial without being told."
+          },
+          "response": [
+            {
+              "name": "422 Unprocessable Entity — unroutable",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ \"...\": \"see request body\" }"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/v1/route/plan",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "route",
+                    "plan"
+                  ]
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"code\": \"unroutable\",\n  \"message\": \"no route satisfies this profile's maximum traffic stress of LTS 1\",\n  \"details\": {\n    \"max_lts\": \"1\",\n    \"stress_budget_m\": \"0\",\n    \"hint\": \"raise stress_budget_m, or use a profile that tolerates more traffic stress\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Plan Route — Error: no rideable road nearby (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"waypoints\": [\n    { \"lat\": 0.0, \"lon\": 0.0 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/route/plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "route",
+                "plan"
+              ]
+            },
+            "description": "Demonstrates the error when a waypoint is outside Austin coverage (or otherwise has no nearby routable road for the snapper to attach to). `(0,0)` — off the coast of West Africa — is a convenient always-fails example."
+          },
+          "response": [
+            {
+              "name": "422 Unprocessable Entity — no nearby road",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ \"...\": \"see request body\" }"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/v1/route/plan",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "route",
+                    "plan"
+                  ]
+                }
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"code\": \"unroutable\",\n  \"message\": \"no rideable road near waypoint 0\",\n  \"details\": null\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Hazards",
+      "description": "Rider-reported hazards, as a live overlay on the safety model. Unlike crash records and elevation — which are refreshed by a batch job — a hazard affects routing immediately: the handler rebuilds the in-memory overlay before it responds (`internal/httpapi/hazard_handler.go`).\n\nReports are accepted anonymously. Sending a Bearer token records you as the author (`optionalAuth`), but is never required.",
+      "item": [
+        {
+          "name": "Report Hazard",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location\": {\n    \"lat\": 30.2711,\n    \"lon\": -97.7546\n  },\n  \"kind\": \"pothole\",\n  \"notes\": \"Large pothole in the bike lane, hard to see at night.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/hazards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "hazards"
+              ]
+            },
+            "description": "Submit a hazard at a point.\n\n**Body** (`internal/hazard/store.go: Submission`):\n- `location` (required, `{lat, lon}`) — where the hazard is.\n- `kind` (required string) — one of `debris`, `pothole`, `poor_visibility`, `aggressive_traffic`, `blocked_lane`, `construction`, `dangerous_junction`, `other`. These match the CHECK constraint on `hazard_report.kind`.\n- `notes` (optional string, max 500 chars).\n\nNote the field names are `kind` and `notes` — not `type` and `description`. The server decodes with `DisallowUnknownFields`, so a wrong name is a 400 rather than a silently ignored field.\n\nA hazard reaches 30 m in every direction (`hazard.MatchRadiusM`) — wider than the crash radius, because a rider dropping a pin from memory is less precise than a police report filed at a known intersection. Reports expire after 90 days."
+          },
+          "response": []
+        },
+        {
+          "name": "List Hazards in a Bounding Box",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/hazards?bbox=-97.80,30.23,-97.70,30.30&limit=200",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "hazards"
+              ],
+              "query": [
+                {
+                  "key": "bbox",
+                  "value": "-97.80,30.23,-97.70,30.30",
+                  "description": "Required. minLon,minLat,maxLon,maxLat — the order is longitude-first, matching GeoJSON rather than the {lat, lon} objects used in request bodies."
+                },
+                {
+                  "key": "limit",
+                  "value": "200",
+                  "description": "Optional. Defaults to 200, capped at 500."
+                }
+              ]
+            },
+            "description": "Active hazards inside a bounding box. `bbox` is **required** — there is no unbounded listing.\n\nReturns `{\"hazards\": [...], \"count\": N}`. Each report carries `id`, `location`, `kind`, `notes`, `confirmations`, `created_at`, and `expires_at`."
+          },
+          "response": []
+        },
+        {
+          "name": "Confirm Hazard",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/hazards/1/confirm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "hazards",
+                "1",
+                "confirm"
+              ]
+            },
+            "description": "Record corroboration from another rider, which increases the hazard's weight in the cost function. Returns the updated report.\n\nReturns `404 not_found` if the id is unknown or the report has expired."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Planned (not yet implemented)",
+      "description": "Routes commented out in `internal/httpapi/server.go` under Phases 5-6. Calling any of these against a running server currently 404s — they're included here as a map of the intended surface, to update to real requests once each is wired in.",
+      "item": [
+        {
+          "name": "[Phase 6] Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"rider@example.com\",\n  \"password\": \"choose-a-strong-password\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "**Not yet implemented** (`internal/httpapi/server.go`, commented out). Intended to create an account so a rider can save routes across sessions. `internal/auth` already provides password hashing and JWT issuance for this."
+          },
+          "response": []
+        },
+        {
+          "name": "[Phase 6] Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"rider@example.com\",\n  \"password\": \"choose-a-strong-password\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "**Not yet implemented.** Intended to exchange credentials for a JWT to use as a Bearer token on the routes below."
+          },
+          "response": []
+        },
+        {
+          "name": "[Phase 6] List Saved Routes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/routes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "routes"
+              ]
+            },
+            "description": "**Not yet implemented.** Intended to list the authenticated rider's saved routes (`requireAuth` middleware)."
+          },
+          "response": []
+        },
+        {
+          "name": "[Phase 6] Save Route",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Commute home\",\n  \"waypoints\": [\n    { \"lat\": 30.2747, \"lon\": -97.7404 },\n    { \"lat\": 30.2669, \"lon\": -97.7729 }\n  ],\n  \"profile\": \"comfortable\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/routes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "routes"
+              ]
+            },
+            "description": "**Not yet implemented.** Intended to persist a named route for the authenticated rider to re-plan later without re-entering waypoints."
+          },
+          "response": []
+        },
+        {
+          "name": "[Phase 6] Get Saved Route",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/routes/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "routes",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "**Not yet implemented.** Intended to fetch a single saved route by ID. Unlike list/save/delete, the router comment shows this one without `requireAuth` — likely meant to support sharing a saved route via link."
+          },
+          "response": []
+        },
+        {
+          "name": "[Phase 6] Delete Saved Route",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{authToken}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/routes/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "routes",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "**Not yet implemented.** Intended to delete one of the authenticated rider's saved routes."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
