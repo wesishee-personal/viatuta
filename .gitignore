@@ -1,0 +1,21 @@
+# Binaries
+/bin/
+
+# Downloaded source data — large, reproducible, never committed
+/data/*
+!/data/.gitkeep
+
+# Local environment overrides
+.env
+/data/elevation/
+
+# Frontend
+/web/node_modules/
+/web/dist/
+
+# iOS
+/ios/*.xcodeproj/
+/ios/build/
+/ios/DerivedData/
+xcuserdata/
+.DS_Store
