@@ -221,15 +221,15 @@ type Graph struct {
 	LengthM []float32
 	DBID    []int64 // routing_edge.id, for fetching geometry later
 
-	Infra      []Infra
-	Highway    []Highway
-	Surface    []Surface
-	MaxSpeed   []int16 // mph, SpeedUnknown when untagged
-	Lanes      []int8  // LanesUnknown when untagged
-	Lit        []int8  // LitUnknown / LitNo / LitYes
-	LTS        []uint8 // 0 until `viatuta score-edges` computes it
-	CrashScore []float32
-	GradePct   []float32
+	Infra          []Infra
+	Highway        []Highway
+	Surface        []Surface
+	MaxSpeed       []int16 // mph, SpeedUnknown when untagged
+	Lanes          []int8  // LanesUnknown when untagged
+	Lit            []int8  // LitUnknown / LitNo / LitYes
+	LTS            []uint8 // 0 until `viatuta score-edges` computes it
+	CollisionScore []float32
+	GradePct       []float32
 
 	// Compass bearings in the direction of travel, for turn classification.
 	BearingStart []float32

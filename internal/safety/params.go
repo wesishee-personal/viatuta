@@ -105,12 +105,12 @@ const (
 	SteepDescentPenalty = 0.6
 )
 
-// --- crash pressure ------------------------------------------------------
+// --- collision pressure ------------------------------------------------------
 
-// CrashPenaltyScale converts the normalised 0..1 crash score into cost. Kept
-// well below the LTS penalties on purpose: crash data is exposure-blind, so
+// CollisionPenaltyScale converts the normalised 0..1 collision score into cost. Kept
+// well below the LTS penalties on purpose: collision data is exposure-blind, so
 // it corrects the road-geometry model rather than replacing it.
-const CrashPenaltyScale = 2.5
+const CollisionPenaltyScale = 2.5
 
 // --- lighting ------------------------------------------------------------
 
@@ -123,7 +123,7 @@ const UnlitPenalty = 0.8
 // --- rider-reported hazards ----------------------------------------------
 
 // HazardPenaltyScale converts a 0..1 hazard score into cost. Held below the
-// crash scale on purpose: hazard reports are unverified and a single rider
+// collision scale on purpose: hazard reports are unverified and a single rider
 // can file one, so they nudge routing rather than dictate it.
 const HazardPenaltyScale = 1.5
 

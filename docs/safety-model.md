@@ -43,47 +43,47 @@ number of through lanes, and the speed limit. A protected track is LTS 1
 regardless of the road it runs beside — that is the entire point of physical
 separation.
 
-**Why LTS rather than a raw crash rate?** Crash data is *exposure-blind*. A
-terrifying arterial with no crashes on record may simply be a road no cyclist
-is willing to ride. Counting crashes alone would score it as safe. LTS
+**Why LTS rather than a raw collision rate?** Collision data is *exposure-blind*. A
+terrifying arterial with no collisions on record may simply be a road no cyclist
+is willing to ride. Counting collisions alone would score it as safe. LTS
 measures the road itself, so it does not have that blind spot.
 
-## Crash pressure
+## Collision pressure
 
-Crash history is the empirical counterweight to LTS's theoretical rubric —
+Collision history is the empirical counterweight to LTS's theoretical rubric —
 it catches the specific junction that is worse than its geometry suggests.
 
 - Source: TxDOT CRIS, via data.austintexas.gov.
-- Only cyclist-involved crashes count.
+- Only cyclist-involved collisions count.
 - Severity is weighted on the KABCO scale; a fatality counts far more than a
   possible injury.
-- Recency decays exponentially — road layouts change, and a 2015 crash on a
+- Recency decays exponentially — road layouts change, and a 2015 collision on a
   street that has since been rebuilt says little about today.
 - The result is normalised to 0..1 per edge, so one catastrophic junction
   cannot arbitrarily dominate the whole cost function.
 
-**Known limitation:** crash records are reported at the nearest address or
+**Known limitation:** collision records are reported at the nearest address or
 intersection, so positional accuracy is roughly ±30 m. We therefore treat
-crash pressure as a neighbourhood signal, not a per-metre one.
+collision pressure as a neighbourhood signal, not a per-metre one.
 
 ### What the data gave us (2,350 records, 2016 onward)
 
 The first run scored LTS 1 as *more* dangerous than LTS 2, which is
 impossible if the model is right. The cause was instructive: protected tracks
-running alongside arterials were inheriting the roadway's crash record, since
-a crash on South Congress falls within the match radius of the separated track
+running alongside arterials were inheriting the roadway's collision record, since
+a collision on South Congress falls within the match radius of the separated track
 beside it. A motor-vehicle collision in the carriageway is weak evidence about
 the facility built to keep riders out of it.
 
 Two corrections fixed the inversion:
 
-- **Distance decay** (e-folding at 12 m), so a crash is evidence mainly about
+- **Distance decay** (e-folding at 12 m), so a collision is evidence mainly about
   the segment it sits on rather than smearing equally across every nearby one.
 - **A discount for separated infrastructure** (0.25), partial rather than
   total, because riders genuinely are struck on tracks at driveway and
   junction crossings.
 
-Mean crash score by stress level, before and after:
+Mean collision score by stress level, before and after:
 
 | LTS | before | after |
 |-----|--------|-------|
@@ -134,7 +134,7 @@ two are directly comparable and the totals stay meaningful.
   and each request takes one immutable snapshot — so the search loop needs no
   locking, and a route cannot change shape halfway through being computed.
 
-  The weighting is held below crash pressure deliberately. A report is
+  The weighting is held below collision pressure deliberately. A report is
   unverified and a single person can file one, so hazards nudge routing rather
   than dictate it; corroboration from other riders is what raises their
   influence.
@@ -327,7 +327,7 @@ attributes the data to the wrong road. Use `Graph.IndexOfDBID`.
 
 ## Open questions
 
-- How steeply should crash weight decay with age? Start: 5-year window,
+- How steeply should collision weight decay with age? Start: 5-year window,
   exponential half-life of ~2 years. Revisit once the data is loaded.
 - Should `lit` default to penalised in areas where OSM coverage of street
   lighting is known to be sparse? Currently no; unknown stays neutral. At 1.1%

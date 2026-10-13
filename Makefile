@@ -68,16 +68,16 @@ ingest: ## Load the OSM extract into Postgres
 score: ## Recompute Level of Traffic Stress for every edge
 	go run ./cmd/viatuta score-edges
 
-.PHONY: ingest-crashes
-ingest-crashes: ## Load Austin cyclist crash records and match them to edges
-	go run ./cmd/viatuta ingest-crashes
+.PHONY: ingest-collisions
+ingest-collisions: ## Load Austin cyclist collision records and match them to edges
+	go run ./cmd/viatuta ingest-collisions
 
 .PHONY: ingest-elevation
 ingest-elevation: ## Download terrain tiles and derive per-edge gradient
 	go run ./cmd/viatuta ingest-elevation
 
 .PHONY: data-all
-data-all: ingest score ingest-crashes ingest-elevation ## Full pipeline from a fresh extract
+data-all: ingest score ingest-collisions ingest-elevation ## Full pipeline from a fresh extract
 
 # ---- Build / run ---------------------------------------------------------
 

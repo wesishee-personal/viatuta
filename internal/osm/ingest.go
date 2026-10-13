@@ -34,7 +34,7 @@ func Load(ctx context.Context, pool *pgxpool.Pool, g *Graph, logger *slog.Logger
 	// defer unconditionally — and it guarantees cleanup on every error path.
 	defer tx.Rollback(ctx)
 
-	// CASCADE also clears crash_edge, whose rows reference edge ids that are
+	// CASCADE also clears collision_edge, whose rows reference edge ids that are
 	// about to be reassigned.
 	if _, err := tx.Exec(ctx, `TRUNCATE routing_node, routing_edge CASCADE`); err != nil {
 		return fmt.Errorf("osm: truncating: %w", err)

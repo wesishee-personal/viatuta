@@ -45,7 +45,7 @@ Then load the map data and plan a route:
 make data       # download the Austin OSM extract (~65 MB)
 make ingest     # build the routing graph (~9 s)
 make score      # classify traffic stress (~8 s)
-make data-all   # ...or all of the above plus crash records and elevation
+make data-all   # ...or all of the above plus collision records and elevation
 make run        # the server loads the graph at startup (~400 ms)
 
 curl -X POST localhost:8080/v1/route/plan \
@@ -80,7 +80,7 @@ Profiles are `cautious`, `comfortable` (default), `confident`, and `shortest`.
 Pass a `custom` weight object to tune any term per request.
 
 Four signals feed the cost: OSM infrastructure tags, historical cyclist
-crashes, junction and turn risk, and terrain. Riders can also report hazards
+collisions, junction and turn risk, and terrain. Riders can also report hazards
 (`POST /v1/hazards`), which affect routing immediately.
 
 Each profile pairs a comfort threshold (`max_lts`) with a **stress budget**:
@@ -154,7 +154,7 @@ internal/
   config         environment -> Config
   geo            coordinates, distance, bearings, turn angles
   osm            .osm.pbf -> routable ways and nodes
-  crash          TxDOT crash records -> per-edge crash pressure
+  collision      TxDOT collision records -> per-edge collision pressure
   elevation      terrain tiles -> node elevation -> edge gradient
   hazard         rider-reported hazards, as a live overlay
   graph          the in-memory routing graph
@@ -182,6 +182,6 @@ what things cost. Retuning the safety model never touches search code.
 - [x] **Phase 2** — OSM ingest (175k nodes, 412k directed edges, ~9 s)
 - [x] **Phase 3** — in-memory graph + Dijkstra + `/v1/route/plan`
 - [x] **Phase 4** — LTS, weighted cost, turn costs, rider profiles
-- [x] **Phase 5** — crash records, elevation, rider hazard reports
+- [x] **Phase 5** — collision records, elevation, rider hazard reports
 - [x] **Phase 6** — accounts, tokens, saved routes
 - [x] **Phase 7** — A*, alternative routes, allocation work

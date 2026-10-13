@@ -106,14 +106,14 @@ func loadEdges(ctx context.Context, pool *pgxpool.Pool, g *Graph) error {
 	g.Lanes = make([]int8, 0, n)
 	g.Lit = make([]int8, 0, n)
 	g.LTS = make([]uint8, 0, n)
-	g.CrashScore = make([]float32, 0, n)
+	g.CollisionScore = make([]float32, 0, n)
 	g.GradePct = make([]float32, 0, n)
 	g.BearingStart = make([]float32, 0, n)
 	g.BearingEnd = make([]float32, 0, n)
 
 	rows, err := pool.Query(ctx, `
 		SELECT id, from_node, to_node, length_m, highway, infra_class,
-		       maxspeed_mph, lanes, lit, lts, crash_score, grade_pct,
+		       maxspeed_mph, lanes, lit, lts, collision_score, grade_pct,
 		       coalesce(surface, ''), coalesce(bearing_start, 0), coalesce(bearing_end, 0)
 		FROM routing_edge
 		ORDER BY from_node, id`)
@@ -130,12 +130,12 @@ func loadEdges(ctx context.Context, pool *pgxpool.Pool, g *Graph) error {
 			highway, infra    string
 			speed, lanes, lts *int16
 			lit               *bool
-			crash, grade      *float32
+			collision, grade  *float32
 			surface           string
 			bStart, bEnd      float32
 		)
 		if err := rows.Scan(&id, &from, &to, &length, &highway, &infra,
-			&speed, &lanes, &lit, &lts, &crash, &grade,
+			&speed, &lanes, &lit, &lts, &collision, &grade,
 			&surface, &bStart, &bEnd); err != nil {
 			return fmt.Errorf("graph: scanning edge: %w", err)
 		}
@@ -154,7 +154,7 @@ func loadEdges(ctx context.Context, pool *pgxpool.Pool, g *Graph) error {
 		g.Lanes = append(g.Lanes, int8(optInt16(lanes, int16(LanesUnknown))))
 		g.Lit = append(g.Lit, optLit(lit))
 		g.LTS = append(g.LTS, uint8(optInt16(lts, 0)))
-		g.CrashScore = append(g.CrashScore, optFloat32(crash))
+		g.CollisionScore = append(g.CollisionScore, optFloat32(collision))
 		g.GradePct = append(g.GradePct, optFloat32(grade))
 		g.BearingStart = append(g.BearingStart, bStart)
 		g.BearingEnd = append(g.BearingEnd, bEnd)

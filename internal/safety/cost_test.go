@@ -19,7 +19,7 @@ func oneEdgeGraph(lts uint8, infra graph.Infra, surface graph.Surface, grade flo
 		Surface:  []graph.Surface{surface},
 		MaxSpeed: []int16{graph.SpeedUnknown}, Lanes: []int8{graph.LanesUnknown},
 		Lit: []int8{lit}, LTS: []uint8{lts},
-		CrashScore: []float32{0}, GradePct: []float32{grade},
+		CollisionScore: []float32{0}, GradePct: []float32{grade},
 		BearingStart: []float32{0}, BearingEnd: []float32{0},
 		Offs: []int32{0, 1, 1},
 	}

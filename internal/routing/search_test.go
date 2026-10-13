@@ -42,7 +42,7 @@ func buildGraph(numNodes int, edges []testEdge) *graph.Graph {
 		g.Lanes = append(g.Lanes, graph.LanesUnknown)
 		g.Lit = append(g.Lit, graph.LitUnknown)
 		g.LTS = append(g.LTS, 0)
-		g.CrashScore = append(g.CrashScore, 0)
+		g.CollisionScore = append(g.CollisionScore, 0)
 		g.GradePct = append(g.GradePct, 0)
 		g.Offs[e.from+1]++
 	}

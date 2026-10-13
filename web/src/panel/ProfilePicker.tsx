@@ -17,7 +17,7 @@ const WEIGHT_MAX = 10;
 
 const WEIGHT_LABELS: Record<WeightKey, string> = {
   weight_lts: 'Traffic stress',
-  weight_crash: 'Crash history',
+  weight_collision: 'Collision history',
   weight_grade: 'Hills',
   weight_surface: 'Surface quality',
   weight_light: 'Street lighting',

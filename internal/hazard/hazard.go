@@ -1,6 +1,6 @@
 // Package hazard handles rider-submitted road hazards.
 //
-// Hazards differ from every other signal in this system: they are live. Crash
+// Hazards differ from every other signal in this system: they are live. Collision
 // records and elevation are refreshed by a batch job, but a rider reporting
 // broken glass expects it to affect routing immediately. That shapes the
 // design — scores live in an in-memory overlay that is replaced atomically,
@@ -36,11 +36,11 @@ var Kinds = map[string]float64{
 
 // MatchRadiusM is how far a hazard's influence reaches.
 //
-// Wider than the crash radius because a rider dropping a pin from memory is
+// Wider than the collision radius because a rider dropping a pin from memory is
 // less precise than a police report filed at a known intersection.
 const MatchRadiusM = 30
 
-// saturationConstant shapes the 1 - exp(-x/k) curve, as for crash pressure.
+// saturationConstant shapes the 1 - exp(-x/k) curve, as for collision pressure.
 const saturationConstant = 1.5
 
 // Report is a submitted hazard.
@@ -94,7 +94,7 @@ func (i *Index) replace(s []float32) { i.scores.Store(&s) }
 func (i *Index) Refresh(ctx context.Context, pool *pgxpool.Pool, g *graph.Graph) error {
 	scores := make([]float32, g.NumEdges())
 
-	// Four factors per hazard, mirroring crash pressure so the two signals
+	// Four factors per hazard, mirroring collision pressure so the two signals
 	// are comparable:
 	//
 	//   kind        — a blocked lane matters more than loose gravel;

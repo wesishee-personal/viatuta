@@ -52,8 +52,8 @@ func (m *Model) Multiplier(g *graph.Graph, e int32) float64 {
 		mult += p.WeightLTS * LTSPenalty[lts]
 	}
 
-	if cs := float64(g.CrashScore[e]); cs > 0 {
-		mult += p.WeightCrash * CrashPenaltyScale * cs
+	if cs := float64(g.CollisionScore[e]); cs > 0 {
+		mult += p.WeightCollision * CollisionPenaltyScale * cs
 	}
 
 	// Road above the rider's threshold is permitted only within their
@@ -171,9 +171,9 @@ type Breakdown struct {
 	ByLTS   map[string]float64 `json:"by_lts_m"`
 	ByInfra map[string]float64 `json:"by_infra_m"`
 
-	// CrashExposureM is distance weighted by crash pressure — effectively
+	// CollisionExposureM is distance weighted by collision pressure — effectively
 	// "how many metres of historically dangerous road is this route".
-	CrashExposureM float64 `json:"crash_exposure_m"`
+	CollisionExposureM float64 `json:"collision_exposure_m"`
 
 	// ClimbM and DescentM are total ascent and descent in metres.
 	ClimbM   float64 `json:"climb_m"`
@@ -215,7 +215,7 @@ func (m *Model) Summarise(g *graph.Graph, edges []int32) Breakdown {
 		b.ByLTS[ltsNames[lts]] += l
 		b.ByInfra[g.Infra[e].String()] += l
 
-		b.CrashExposureM += l * float64(g.CrashScore[e])
+		b.CollisionExposureM += l * float64(g.CollisionScore[e])
 
 		// Ascent and descent are tracked separately because they are not
 		// interchangeable: a route with 200 m of climbing is hard work,
@@ -233,7 +233,7 @@ func (m *Model) Summarise(g *graph.Graph, edges []int32) Breakdown {
 			b.HazardM += l
 		}
 	}
-	b.CrashExposureM = math.Round(b.CrashExposureM*10) / 10
+	b.CollisionExposureM = math.Round(b.CollisionExposureM*10) / 10
 	b.ClimbM = math.Round(b.ClimbM*10) / 10
 	b.DescentM = math.Round(b.DescentM*10) / 10
 	b.SteepM = math.Round(b.SteepM*10) / 10

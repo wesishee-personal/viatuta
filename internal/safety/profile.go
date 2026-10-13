@@ -27,13 +27,13 @@ type Profile struct {
 	// them at all.
 	StressBudgetM float64 `json:"stress_budget_m"`
 
-	WeightLTS     float64 `json:"weight_lts"`
-	WeightCrash   float64 `json:"weight_crash"`
-	WeightGrade   float64 `json:"weight_grade"`
-	WeightSurface float64 `json:"weight_surface"`
-	WeightLight   float64 `json:"weight_light"`
-	WeightTurn    float64 `json:"weight_turn"`
-	WeightHazard  float64 `json:"weight_hazard"`
+	WeightLTS       float64 `json:"weight_lts"`
+	WeightCollision float64 `json:"weight_collision"`
+	WeightGrade     float64 `json:"weight_grade"`
+	WeightSurface   float64 `json:"weight_surface"`
+	WeightLight     float64 `json:"weight_light"`
+	WeightTurn      float64 `json:"weight_turn"`
+	WeightHazard    float64 `json:"weight_hazard"`
 
 	// MaxDetourRatio is how much longer than the shortest possible route
 	// this rider will accept before the result is worth flagging.
@@ -50,7 +50,7 @@ var (
 	// physical separation and refuses anything above LTS 2.
 	Cautious = Profile{
 		Name: "cautious", MaxLTS: 2, StressBudgetM: 400,
-		WeightLTS: 1.5, WeightCrash: 1.2, WeightGrade: 1.0,
+		WeightLTS: 1.5, WeightCollision: 1.2, WeightGrade: 1.0,
 		WeightSurface: 1.2, WeightLight: 1.0, WeightTurn: 1.5, WeightHazard: 1.5,
 		MaxDetourRatio: 2.5,
 	}
@@ -59,7 +59,7 @@ var (
 	// streets, avoids arterials without a bike lane.
 	Comfortable = Profile{
 		Name: "comfortable", MaxLTS: 3, StressBudgetM: 800,
-		WeightLTS: 1.0, WeightCrash: 1.0, WeightGrade: 1.0,
+		WeightLTS: 1.0, WeightCollision: 1.0, WeightGrade: 1.0,
 		WeightSurface: 1.0, WeightLight: 1.0, WeightTurn: 1.0, WeightHazard: 1.0,
 		MaxDetourRatio: 1.8,
 	}
@@ -67,7 +67,7 @@ var (
 	// Confident will take a bike lane on an arterial to save real time.
 	Confident = Profile{
 		Name: "confident", MaxLTS: 4, StressBudgetM: 2000,
-		WeightLTS: 0.35, WeightCrash: 0.6, WeightGrade: 0.5,
+		WeightLTS: 0.35, WeightCollision: 0.6, WeightGrade: 0.5,
 		WeightSurface: 0.6, WeightLight: 0.5, WeightTurn: 0.5, WeightHazard: 0.6,
 		MaxDetourRatio: 1.35,
 	}
@@ -106,7 +106,7 @@ func (p Profile) Validate() error {
 	// A negative weight would make some edges cheaper than their own length,
 	// which breaks the floor the A* heuristic depends on in Phase 7.
 	for name, w := range map[string]float64{
-		"weight_lts": p.WeightLTS, "weight_crash": p.WeightCrash,
+		"weight_lts": p.WeightLTS, "weight_collision": p.WeightCollision,
 		"weight_grade": p.WeightGrade, "weight_surface": p.WeightSurface,
 		"weight_light": p.WeightLight, "weight_turn": p.WeightTurn,
 		"weight_hazard": p.WeightHazard,

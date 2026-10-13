@@ -1,12 +1,12 @@
-// Package crash ingests historical collision records and turns them into a
-// per-edge crash pressure signal.
+// Package collision ingests historical collision records and turns them into
+// a per-edge collision pressure signal.
 //
-// Crash data is the empirical counterweight to the LTS rubric. LTS scores the
-// road as designed; crash history catches the specific junction that is worse
-// than its geometry suggests. Neither is sufficient alone — LTS is blind to
-// local hazards, and crash counts are blind to exposure, since a road nobody
-// dares ride records no crashes at all.
-package crash
+// Collision data is the empirical counterweight to the LTS rubric. LTS scores
+// the road as designed; collision history catches the specific junction that
+// is worse than its geometry suggests. Neither is sufficient alone — LTS is
+// blind to local hazards, and collision counts are blind to exposure, since a
+// road nobody dares ride records no collisions at all.
+package collision
 
 import (
 	"context"
@@ -20,19 +20,19 @@ import (
 	"time"
 )
 
-// SocrataEndpoint is Austin's published crash dataset, sourced from the TxDOT
-// CRIS database and maintained by the city's Vision Zero programme.
+// SocrataEndpoint is Austin's published collision dataset, sourced from the
+// TxDOT CRIS database and maintained by the city's Vision Zero programme.
 const SocrataEndpoint = "https://data.austintexas.gov/resource/y2wy-tgr5.json"
 
-// bicycleFilter selects crashes involving a cyclist.
+// bicycleFilter selects collisions involving a cyclist.
 //
 // The dataset labels vehicle types in `units_involved` as a joined string,
 // e.g. "Bicycle & Passenger car". Filtering on the injury-count columns would
-// be wrong: bicycle_serious_injury_count only flags SERIOUS injuries, so
-// every minor-injury bike crash would be silently dropped — about 90% of them.
+// be wrong: bicycle_serious_injury_count only flags SERIOUS injuries, so every
+// minor-injury bike collision would be silently dropped — about 90% of them.
 const bicycleFilter = "units_involved like '%Bicycle%' AND latitude IS NOT NULL"
 
-// Record is one crash as we store it.
+// Record is one collision as we store it.
 type Record struct {
 	SourceID string
 	Lat, Lon float64
@@ -45,6 +45,11 @@ type Record struct {
 //
 // Socrata returns most numbers as JSON strings, so the numeric fields use a
 // tolerant type that accepts either form.
+//
+// Upstream spells these "crash" — cris_crash_id, crash_timestamp. The field
+// names and tags here keep that spelling deliberately, because they name
+// someone else's columns; renaming them would break the query. "Collision" is
+// this package's own vocabulary and stops at the boundary.
 type socrataRow struct {
 	CrisCrashID string    `json:"cris_crash_id"`
 	CaseID      string    `json:"case_id"`
@@ -60,7 +65,7 @@ type socrataRow struct {
 	PossInjry       flexInt `json:"poss_injry_cnt"`
 }
 
-// Fetch downloads cyclist-involved crashes from the last `years` years.
+// Fetch downloads cyclist-involved collisions from the last `years` years.
 func Fetch(ctx context.Context, years int, logger *slog.Logger) ([]Record, error) {
 	cutoff := time.Now().AddDate(-years, 0, 0).Format("2006-01-02T15:04:05")
 
@@ -71,25 +76,25 @@ func Fetch(ctx context.Context, years int, logger *slog.Logger) ([]Record, error
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, SocrataEndpoint+"?"+q.Encode(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("crash: building request: %w", err)
+		return nil, fmt.Errorf("collision: building request: %w", err)
 	}
 
 	client := &http.Client{Timeout: 3 * time.Minute}
-	logger.Info("fetching crash records", "since", cutoff, "source", "austin_cris")
+	logger.Info("fetching collision records", "since", cutoff, "source", "austin_cris")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("crash: fetching: %w", err)
+		return nil, fmt.Errorf("collision: fetching: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("crash: source returned %s", resp.Status)
+		return nil, fmt.Errorf("collision: source returned %s", resp.Status)
 	}
 
 	var raws []json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&raws); err != nil {
-		return nil, fmt.Errorf("crash: decoding response: %w", err)
+		return nil, fmt.Errorf("collision: decoding response: %w", err)
 	}
 
 	records := make([]Record, 0, len(raws))
@@ -103,7 +108,7 @@ func Fetch(ctx context.Context, years int, logger *slog.Logger) ([]Record, error
 		records = append(records, rec)
 	}
 
-	logger.Info("fetched crash records",
+	logger.Info("fetched collision records",
 		"usable", len(records), "skipped", skipped, "returned", len(raws))
 	return records, nil
 }
@@ -114,7 +119,7 @@ func parseRow(raw json.RawMessage) (Record, bool) {
 		return Record{}, false
 	}
 
-	// A crash with no usable position cannot be attributed to a road.
+	// A collision with no usable position cannot be attributed to a road.
 	lat, lon := float64(row.Latitude), float64(row.Longitude)
 	if lat == 0 || lon == 0 || lat < -90 || lat > 90 || lon < -180 || lon > 180 {
 		return Record{}, false

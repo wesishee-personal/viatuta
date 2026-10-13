@@ -154,7 +154,7 @@ func classifyCyclewayValue(v, key string, tags osm.Tags) InfraClass {
 	case "lane", "opposite_lane", "opposite":
 		// A painted buffer or a physical separator upgrades a plain lane.
 		// Riders consistently report buffered lanes as markedly less
-		// stressful, and crash exposure drops with lateral distance.
+		// stressful, and collision exposure drops with lateral distance.
 		if hasBuffer(key, tags) {
 			return InfraBufferedLane
 		}

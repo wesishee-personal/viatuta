@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesishee/viatuta/internal/collision"
 	"github.com/wesishee/viatuta/internal/config"
-	"github.com/wesishee/viatuta/internal/crash"
 	"github.com/wesishee/viatuta/internal/elevation"
 	"github.com/wesishee/viatuta/internal/graph"
 	"github.com/wesishee/viatuta/internal/osm"
@@ -46,10 +46,10 @@ func usage() {
 Usage: viatuta <command> [flags]
 
 Commands:
-  ingest-osm         Load an .osm.pbf extract into the routing graph tables   (Phase 2)
-  ingest-crashes     Fetch Austin cyclist crash records and match to edges    (Phase 5)
-  ingest-elevation   Attach elevation to nodes and grades to edges            (Phase 5)
-  score-edges        Recompute derived safety attributes (LTS, crash score)   (Phase 4)
+  ingest-osm         Load an .osm.pbf extract into the routing graph tables (Phase 2)
+  ingest-collisions  Fetch Austin cyclist collision records, match to edges (Phase 5)
+  ingest-elevation   Attach elevation to nodes and grades to edges          (Phase 5)
+  score-edges        Recompute derived safety attributes (LTS, collisions)  (Phase 4)
   graph-stats        Print graph size and connectivity diagnostics
   bench-routing      Time random routes on the real graph, with and without A*
 
@@ -88,24 +88,24 @@ func run(args []string) error {
 			return ingestOSM(ctx, pool, *input, logger)
 		})
 
-	case "ingest-crashes":
-		fs := flag.NewFlagSet("ingest-crashes", flag.ExitOnError)
-		years := fs.Int("years", 10, "how many years of crash history to load")
+	case "ingest-collisions":
+		fs := flag.NewFlagSet("ingest-collisions", flag.ExitOnError)
+		years := fs.Int("years", 10, "how many years of collision history to load")
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}
 		return withDB(ctx, cfg, logger, func(pool *store.Pool) error {
-			records, err := crash.Fetch(ctx, *years, logger)
+			records, err := collision.Fetch(ctx, *years, logger)
 			if err != nil {
 				return err
 			}
 			if len(records) == 0 {
-				return fmt.Errorf("ingest-crashes: no usable records returned")
+				return fmt.Errorf("ingest-collisions: no usable records returned")
 			}
-			if err := crash.Store(ctx, pool, records, logger); err != nil {
+			if err := collision.Store(ctx, pool, records, logger); err != nil {
 				return err
 			}
-			return crash.MatchToEdges(ctx, pool, logger)
+			return collision.MatchToEdges(ctx, pool, logger)
 		})
 
 	case "ingest-elevation":

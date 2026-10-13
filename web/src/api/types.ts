@@ -29,7 +29,7 @@ export interface Profile {
   max_lts: number;
   stress_budget_m: number;
   weight_lts: number;
-  weight_crash: number;
+  weight_collision: number;
   weight_grade: number;
   weight_surface: number;
   weight_light: number;
@@ -42,7 +42,7 @@ export interface Profile {
 /** The seven tunable weights, in the order the advanced panel shows them. */
 export const WEIGHT_KEYS = [
   'weight_lts',
-  'weight_crash',
+  'weight_collision',
   'weight_grade',
   'weight_surface',
   'weight_light',
@@ -80,7 +80,7 @@ export interface SnapInfo {
 export interface Breakdown {
   by_lts_m: Record<string, number>;
   by_infra_m: Record<string, number>;
-  crash_exposure_m: number;
+  collision_exposure_m: number;
   climb_m: number;
   descent_m: number;
   steep_m: number;

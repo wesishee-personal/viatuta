@@ -100,11 +100,11 @@ export function Breakdown({ data, units, selection, onSelect, interactive }: Pro
             hint="Gradient past the comfort deadband"
           />
         )}
-        {data.crash_exposure_m > 0 && (
+        {data.collision_exposure_m > 0 && (
           <Fact
-            label="Crash-heavy road"
-            value={distance(data.crash_exposure_m, units)}
-            hint="Distance weighted by historical cyclist crash pressure"
+            label="Collision-heavy road"
+            value={distance(data.collision_exposure_m, units)}
+            hint="Distance weighted by historical cyclist collision pressure"
           />
         )}
         {data.hazard_m > 0 && (
