@@ -16,6 +16,7 @@ func TestHazardWritesRequireAuth(t *testing.T) {
 	routes := []struct{ method, path, body string }{
 		{http.MethodPost, "/v1/hazards", `{"location":{"lat":30.27,"lon":-97.74},"kind":"pothole"}`},
 		{http.MethodPost, "/v1/hazards/1/confirm", ``},
+		{http.MethodPost, "/v1/hazards/1/resolve", ``},
 	}
 	headers := map[string]string{
 		"no token":      "",

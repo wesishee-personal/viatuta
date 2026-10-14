@@ -25,22 +25,21 @@ func (s *Server) handleReportHazard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rep, err := hazard.Create(r.Context(), s.pool, sub, UserIDFrom(r.Context()))
+	rep, created, err := hazard.Create(r.Context(), s.pool, sub, UserIDFrom(r.Context()))
 	if err != nil {
 		writeInternalError(w, s.logger, err)
 		return
 	}
 
-	// Rebuild the routing overlay so the next request already avoids this.
-	// A failure here is logged rather than returned: the report IS stored,
-	// and telling the rider it failed would invite a duplicate submission.
-	if s.hazards != nil && s.graph != nil {
-		if err := s.hazards.Refresh(r.Context(), s.pool, s.graph); err != nil {
-			s.logger.Error("refreshing hazard overlay", "error", err, "hazard_id", rep.ID)
-		}
-	}
+	s.refreshHazards(r, rep.ID)
 
-	writeJSON(w, http.StatusCreated, rep)
+	// 201 for a new hazard, 200 when the report merged into one already on the
+	// map. Either way the body is the hazard the rider is now part of.
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, rep)
 }
 
 // handleListHazards returns active hazards in a bounding box.
@@ -89,26 +88,71 @@ func (s *Server) handleListHazards(w http.ResponseWriter, r *http.Request) {
 
 // handleConfirmHazard records corroboration from another rider.
 func (s *Server) handleConfirmHazard(w http.ResponseWriter, r *http.Request) {
+	id, ok := hazardID(w, r)
+	if !ok {
+		return
+	}
+
+	rep, err := hazard.Confirm(r.Context(), s.pool, id, UserIDFrom(r.Context()))
+	if err != nil {
+		s.writeVoteError(w, err)
+		return
+	}
+
+	s.refreshHazards(r, rep.ID)
+	writeJSON(w, http.StatusOK, rep)
+}
+
+// handleResolveHazard records that a rider found the hazard gone. Once enough
+// riders agree (or the reporter says so) it comes down; the response shows
+// whether it did through its expires_at.
+func (s *Server) handleResolveHazard(w http.ResponseWriter, r *http.Request) {
+	id, ok := hazardID(w, r)
+	if !ok {
+		return
+	}
+
+	rep, err := hazard.Resolve(r.Context(), s.pool, id, UserIDFrom(r.Context()))
+	if err != nil {
+		s.writeVoteError(w, err)
+		return
+	}
+
+	s.refreshHazards(r, rep.ID)
+	writeJSON(w, http.StatusOK, rep)
+}
+
+func hazardID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeValidationError(w, "invalid hazard id", map[string]string{"id": "must be a number"})
+		return 0, false
+	}
+	return id, true
+}
+
+// writeVoteError maps the outcomes of confirming or resolving to responses.
+func (s *Server) writeVoteError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, hazard.ErrNotFound):
+		writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+	case errors.Is(err, hazard.ErrOwnReport), errors.Is(err, hazard.ErrAlreadyVoted):
+		writeError(w, http.StatusConflict, CodeConflict, err.Error())
+	default:
+		writeInternalError(w, s.logger, err)
+	}
+}
+
+// refreshHazards rebuilds the routing overlay so the next request already
+// reflects the change. A failure is logged and not returned: the change IS
+// stored, and telling the rider it failed would invite a duplicate attempt.
+func (s *Server) refreshHazards(r *http.Request, hazardID int64) {
+	if s.hazards == nil || s.graph == nil {
 		return
 	}
-
-	rep, err := hazard.Confirm(r.Context(), s.pool, id)
-	if err != nil {
-		// The only expected failure is an id that is gone or expired.
-		writeError(w, http.StatusNotFound, CodeNotFound, "no active hazard with that id")
-		return
+	if err := s.hazards.Refresh(r.Context(), s.pool, s.graph); err != nil {
+		s.logger.Error("refreshing hazard overlay", "error", err, "hazard_id", hazardID)
 	}
-
-	if s.hazards != nil && s.graph != nil {
-		if err := s.hazards.Refresh(r.Context(), s.pool, s.graph); err != nil {
-			s.logger.Error("refreshing hazard overlay", "error", err, "hazard_id", rep.ID)
-		}
-	}
-
-	writeJSON(w, http.StatusOK, rep)
 }
 
 // KindInfo describes a hazard kind to clients.

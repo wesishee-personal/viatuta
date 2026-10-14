@@ -105,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/hazards", s.handleListHazards)
 	mux.HandleFunc("GET /v1/hazards/kinds", s.handleListKinds)
 	mux.HandleFunc("POST /v1/hazards/{id}/confirm", s.requireAuth(s.handleConfirmHazard))
+	mux.HandleFunc("POST /v1/hazards/{id}/resolve", s.requireAuth(s.handleResolveHazard))
 
 	// Outermost first: a panic inside logging should still be recovered,
 	// and every log line should already have a request ID to report.
