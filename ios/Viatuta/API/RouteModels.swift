@@ -9,6 +9,10 @@ struct LatLon: Codable, Equatable {
         lat = coordinate.latitude
         lon = coordinate.longitude
     }
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
 }
 
 struct PlanRequest: Encodable {
@@ -16,7 +20,7 @@ struct PlanRequest: Encodable {
     var profile: String?
 }
 
-struct GeoJSONLineString: Decodable {
+struct GeoJSONLineString: Decodable, Equatable {
     /// GeoJSON order: `[longitude, latitude]`.
     let coordinates: [[Double]]
 }
@@ -68,4 +72,42 @@ struct DrawableSegment: Identifiable {
     let id: Int
     let lts: Int
     let coordinates: [CLLocationCoordinate2D]
+}
+
+// MARK: Saved routes
+
+struct SaveRouteRequest: Encodable {
+    let name: String
+    let waypoints: [LatLon]
+}
+
+/// A saved route as listed or returned by creation. Geometry is omitted
+/// there; fetch `SavedRouteDetail` to draw it.
+struct SavedRoute: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let distanceM: Double
+    let durationS: Int?
+    let safetyScore: Double?
+    let createdAt: Date
+}
+
+struct SavedRoutesResponse: Decodable {
+    let routes: [SavedRoute]
+}
+
+struct SavedRouteDetail: Decodable, Equatable {
+    let id: String
+    let name: String
+    let waypoints: [LatLon]
+    let distanceM: Double
+    let durationS: Int?
+    let safetyScore: Double?
+    let geometry: GeoJSONLineString
+
+    var coordinates: [CLLocationCoordinate2D] {
+        geometry.coordinates.compactMap { pair in
+            pair.count >= 2 ? CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0]) : nil
+        }
+    }
 }

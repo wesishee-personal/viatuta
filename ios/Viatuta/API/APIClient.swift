@@ -61,6 +61,21 @@ struct APIClient {
         body: (some Encodable)? = Optional<String>.none,
         authenticated: Bool = false
     ) async throws -> Response {
+        let data = try await perform(method, path, body: body, authenticated: authenticated)
+        return try Self.decoder.decode(Response.self, from: data)
+    }
+
+    /// For endpoints that answer 204 No Content.
+    func sendNoContent(_ method: String, _ path: String, authenticated: Bool = false) async throws {
+        _ = try await perform(method, path, body: Optional<String>.none, authenticated: authenticated)
+    }
+
+    private func perform(
+        _ method: String,
+        _ path: String,
+        body: (some Encodable)?,
+        authenticated: Bool
+    ) async throws -> Data {
         var request = URLRequest(url: baseURL.appending(path: path))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -88,7 +103,7 @@ struct APIClient {
             }
             throw APIError.unexpectedStatus(http.statusCode)
         }
-        return try Self.decoder.decode(Response.self, from: data)
+        return data
     }
 
     // MARK: Auth
@@ -111,5 +126,26 @@ struct APIClient {
     func planRoute(from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D) async throws -> PlanResponse {
         try await send("POST", "v1/route/plan",
                        body: PlanRequest(waypoints: [LatLon(origin), LatLon(destination)]))
+    }
+
+    // MARK: Saved routes
+
+    func saveRoute(name: String, from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D) async throws -> SavedRoute {
+        try await send("POST", "v1/routes",
+                       body: SaveRouteRequest(name: name, waypoints: [LatLon(origin), LatLon(destination)]),
+                       authenticated: true)
+    }
+
+    func savedRoutes() async throws -> [SavedRoute] {
+        let response: SavedRoutesResponse = try await send("GET", "v1/routes", authenticated: true)
+        return response.routes
+    }
+
+    func savedRoute(id: String) async throws -> SavedRouteDetail {
+        try await send("GET", "v1/routes/\(id)", authenticated: true)
+    }
+
+    func deleteSavedRoute(id: String) async throws {
+        try await sendNoContent("DELETE", "v1/routes/\(id)", authenticated: true)
     }
 }
