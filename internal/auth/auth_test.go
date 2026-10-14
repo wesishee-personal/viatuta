@@ -29,6 +29,20 @@ func TestHashAndCheckPassword(t *testing.T) {
 // TestHashesAreSalted checks that identical passwords produce different
 // hashes. Without a salt, an attacker could crack every account sharing a
 // password at once, and spot which users share one just by reading the table.
+// TestMaxLengthPasswordCanBeHashed guards the contract between validation and
+// bcrypt: anything ValidatePassword accepts must hash without error. When the
+// maximum was 200, a 100-character password passed validation and then failed
+// in bcrypt, surfacing as a 500.
+func TestMaxLengthPasswordCanBeHashed(t *testing.T) {
+	pw := strings.Repeat("a", MaxPasswordLen)
+	if err := ValidatePassword(pw); err != nil {
+		t.Fatalf("ValidatePassword: %v", err)
+	}
+	if _, err := HashPassword(pw); err != nil {
+		t.Fatalf("a password ValidatePassword accepts must hash: %v", err)
+	}
+}
+
 func TestHashesAreSalted(t *testing.T) {
 	a, err := HashPassword("the same password")
 	if err != nil {
@@ -59,7 +73,12 @@ func TestValidatePassword(t *testing.T) {
 		{"empty", "", false},
 		// bcrypt ignores everything past 72 bytes, so an over-long password
 		// would be silently weaker than the user believes.
-		{"absurdly long", strings.Repeat("a", MaxPasswordLen+1), false},
+		{"exactly maximum", strings.Repeat("a", MaxPasswordLen), true},
+		{"one over maximum", strings.Repeat("a", MaxPasswordLen+1), false},
+		// The limit is bytes, so multi-byte characters reach it sooner: 40
+		// of these is 40 characters but 80 bytes.
+		{"multibyte under maximum", strings.Repeat("é", 30), true},
+		{"multibyte over maximum", strings.Repeat("é", 40), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -26,7 +26,9 @@ const BcryptCost = 12
 // entropy.
 const (
 	MinPasswordLen = 10
-	MaxPasswordLen = 200 // bcrypt silently truncates past 72 bytes; reject long input outright
+	// MaxPasswordLen is in BYTES, not characters: bcrypt refuses input past 72
+	// bytes, so accepting more would turn into a server error at hashing time.
+	MaxPasswordLen = 72
 )
 
 var (
@@ -75,7 +77,7 @@ func ValidatePassword(p string) error {
 	// would silently ignore the rest, so a 200-character passphrase would be
 	// no stronger than its first 72 bytes while the user believed otherwise.
 	if len(p) > MaxPasswordLen {
-		return fmt.Errorf("%w: must be at most %d characters", ErrWeakPassword, MaxPasswordLen)
+		return fmt.Errorf("%w: must be at most %d bytes", ErrWeakPassword, MaxPasswordLen)
 	}
 	return nil
 }
