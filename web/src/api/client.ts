@@ -4,6 +4,7 @@ import type {
   AuthUser,
   ErrorCode,
   ErrorResponse,
+  HazardKindsResponse,
   HazardListResponse,
   HazardReport,
   HazardSubmission,
@@ -72,6 +73,16 @@ export function setSessionExpiredHandler(handler: (() => void) | null): void {
 }
 
 async function request<T>(path: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
+  return (await requestWithStatus<T>(path, init, signal)).data;
+}
+
+/** Like `request`, but also returns the HTTP status, for the few endpoints
+ *  where 200 and 201 mean different things. */
+async function requestWithStatus<T>(
+  path: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+): Promise<{ status: number; data: T }> {
   // Compose the caller's signal with our own timeout so either can cancel.
   const timeout = AbortSignal.timeout(TIMEOUT_MS);
   const composed = signal ? AbortSignal.any([signal, timeout]) : timeout;
@@ -109,9 +120,9 @@ async function request<T>(path: string, init: RequestInit, signal?: AbortSignal)
     throw new ApiError(res.status, body, requestId);
   }
 
-  if (res.status === 204) return undefined as T;
+  if (res.status === 204) return { status: res.status, data: undefined as T };
   try {
-    return (await res.json()) as T;
+    return { status: res.status, data: (await res.json()) as T };
   } catch (err) {
     throw new NetworkError('the server sent a response we could not read', err);
   }
@@ -167,12 +178,43 @@ export function listHazards(bbox: string, signal?: AbortSignal): Promise<HazardL
   return request<HazardListResponse>(`/v1/hazards?${params}`, { method: 'GET' }, signal);
 }
 
-export function reportHazard(sub: HazardSubmission, signal?: AbortSignal): Promise<HazardReport> {
-  return postJSON<HazardReport>('/v1/hazards', sub, signal);
+/**
+ * Report a hazard. `merged` is true when the server folded the report into a
+ * hazard already on the map (HTTP 200) instead of creating a new one (201): it
+ * then counts as this rider's confirmation of the existing hazard.
+ */
+export async function reportHazard(
+  sub: HazardSubmission,
+  signal?: AbortSignal,
+): Promise<{ hazard: HazardReport; merged: boolean }> {
+  const { status, data } = await requestWithStatus<HazardReport>(
+    '/v1/hazards',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub),
+    },
+    signal,
+  );
+  return { hazard: data, merged: status === 200 };
 }
 
+/** "I saw it too." One response per rider, and not for your own report. */
 export function confirmHazard(id: number, signal?: AbortSignal): Promise<HazardReport> {
   return request<HazardReport>(`/v1/hazards/${id}/confirm`, { method: 'POST' }, signal);
+}
+
+/**
+ * "It's gone." The reporter can take their own hazard down alone; otherwise it
+ * takes two riders. The response's `expires_at` is in the past once it is down.
+ */
+export function resolveHazard(id: number, signal?: AbortSignal): Promise<HazardReport> {
+  return request<HazardReport>(`/v1/hazards/${id}/resolve`, { method: 'POST' }, signal);
+}
+
+/** Every hazard kind with its lifetime, so the UI never hard-codes the list. */
+export function listHazardKinds(signal?: AbortSignal): Promise<HazardKindsResponse> {
+  return request<HazardKindsResponse>('/v1/hazards/kinds', { method: 'GET' }, signal);
 }
 
 /** Reports whether the routing graph is loaded. Used to turn a 503 into a

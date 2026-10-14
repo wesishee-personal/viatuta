@@ -50,13 +50,45 @@ export function relativeTime(iso: string): string {
   return days === 1 ? 'yesterday' : `${days} days ago`;
 }
 
-/** "expires in 12 days" — a hazard that is about to lapse is weaker evidence. */
+/**
+ * A span of time for a rider: "30 minutes", "3 hours", "7 days". Hazard
+ * lifetimes run from an hour to months, so one unit does not fit them all.
+ */
+export function span(seconds: number): string {
+  const mins = Math.round(seconds / 60);
+  if (mins < 90) return mins === 1 ? '1 minute' : `${mins} minutes`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return hours === 1 ? '1 hour' : `${hours} hours`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? '1 day' : `${days} days`;
+}
+
+/** "expires in 2 hours" — a hazard that is about to lapse is weaker evidence.
+ *  Lifetimes can be a few hours, so this must not round to whole days. */
 export function expiresIn(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '';
-  const days = Math.round((then - Date.now()) / 86_400_000);
-  if (days <= 0) return 'expiring now';
-  return days === 1 ? 'expires tomorrow' : `expires in ${days} days`;
+  const secs = (then - Date.now()) / 1000;
+  if (secs < 60) return 'expiring now';
+  if (secs >= 86_400 && secs < 2 * 86_400) return 'expires tomorrow';
+  return `expires in ${span(secs)}`;
+}
+
+const COMPASS = [
+  'north',
+  'north-east',
+  'east',
+  'south-east',
+  'south',
+  'south-west',
+  'west',
+  'north-west',
+];
+
+/** A compass heading in degrees as a direction word: 90 is "east". */
+export function compass(deg: number): string {
+  const i = Math.round((((deg % 360) + 360) % 360) / 45) % 8;
+  return COMPASS[i] ?? 'north';
 }
 
 export function coord(n: number): string {

@@ -26,6 +26,9 @@ export default function App() {
   const [reporting, setReporting] = useState(false);
   const [pendingHazard, setPendingHazard] = useState<LatLon | null>(null);
   const [selectedHazard, setSelectedHazard] = useState<number | null>(null);
+  // A short-lived message over the map, e.g. after a report merges into an
+  // existing hazard.
+  const [notice, setNotice] = useState<string | null>(null);
 
   const { settings, setSettings, retryWith, status, plan, baseline, error } = usePlan(
     origin,
@@ -33,6 +36,12 @@ export default function App() {
     showGhost,
   );
   const { hazards, refresh } = useHazards(viewport);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
   const selected = useMemo(
     () => hazards.find((h) => h.id === selectedHazard) ?? null,
@@ -152,8 +161,11 @@ export default function App() {
             <ReportHazardForm
               location={pendingHazard}
               onCancel={() => setPendingHazard(null)}
-              onReported={() => {
+              onReported={(merged) => {
                 setPendingHazard(null);
+                if (merged) {
+                  setNotice('Someone already reported this here, so yours counted as a confirmation.');
+                }
                 refresh();
               }}
             />
@@ -162,6 +174,7 @@ export default function App() {
         {reporting && (
           <div className="map__banner">Click the map where the hazard is</div>
         )}
+        {!reporting && notice && <div className="map__banner">{notice}</div>}
       </main>
     </div>
   );

@@ -123,3 +123,6 @@ export const ROUTE_COLOR = '#2b6cb0';
 export const ROUTE_CASING = '#ffffff';
 export const BASELINE_COLOR = '#8a9099';
 export const HAZARD_COLOR = '#c2410c';
+/** Road closures are a different claim from "this stretch is bad", so they
+ *  read differently on the map. */
+export const CLOSURE_COLOR = '#991b1b';

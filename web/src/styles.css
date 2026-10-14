@@ -378,6 +378,8 @@ button.link {
 .hazard-popup__notes { font-size: 13px; }
 .hazard-popup__done { color: var(--good); font-size: 13px; margin: 8px 0 0; }
 .hazard-popup button { margin-top: 8px; }
+.hazard-popup .row { margin-top: 0; }
+.hazard-popup .row button { margin-top: 8px; }
 .hazard-popup .mapboxgl-popup-close-button { color: var(--fg-dim); font-size: 18px; }
 
 /* ---- Sign-in dialog ---------------------------------------------------- */

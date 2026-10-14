@@ -85,6 +85,9 @@ export interface Breakdown {
   descent_m: number;
   steep_m: number;
   hazard_m: number;
+  /** Distance along roads reported closed; above zero means the route goes
+   *  through a reported closure. */
+  closed_road_m?: number;
 }
 
 /** A run of consecutive road segments sharing the same traffic stress and
@@ -130,47 +133,37 @@ export interface PlanResponse {
 // Hazards — internal/hazard/store.go:17, internal/hazard/hazard.go:47
 // ---------------------------------------------------------------------------
 
-/** internal/hazard/hazard.go:26. Ordered least to most severe, matching the
- *  weights the backend assigns each kind. */
-export const HAZARD_KINDS = [
-  'other',
-  'debris',
-  'pothole',
-  'poor_visibility',
-  'aggressive_traffic',
-  'blocked_lane',
-  'construction',
-  'dangerous_junction',
-] as const;
-export type HazardKind = (typeof HAZARD_KINDS)[number];
+/** A hazard kind's name, e.g. "pothole". The set of kinds is owned by the
+ *  server and fetched from GET /v1/hazards/kinds, so it is a plain string
+ *  here: a new kind then needs no web release. */
+export type HazardKind = string;
 
-export const HAZARD_LABELS: Record<HazardKind, string> = {
-  other: 'Something else',
-  debris: 'Debris or broken glass',
-  pothole: 'Pothole or bad surface',
-  poor_visibility: 'Poor visibility',
-  aggressive_traffic: 'Aggressive traffic',
-  blocked_lane: 'Blocked bike lane',
-  construction: 'Construction',
-  dangerous_junction: 'Dangerous junction',
-};
+/** One entry of GET /v1/hazards/kinds (internal/httpapi/hazard_handler.go). */
+export interface HazardKindInfo {
+  kind: HazardKind;
+  label: string;
+  /** How long a fresh report lives. */
+  ttl_s: number;
+  confirm_extension_s: number;
+  max_life_s: number;
+  merge_radius_m: number;
+  /** Whether a report's heading limits it to one direction of travel. */
+  directional: boolean;
+  /** Routing influence, 0..1; used to draw serious hazards more boldly. */
+  weight: number;
+  /** The road cannot be ridden, which routing treats far more steeply. */
+  closure: boolean;
+}
 
-/** Matches the backend's per-kind weights (internal/hazard/hazard.go:26), so
- *  the map legend and the routing penalty agree on what counts as serious. */
-export const HAZARD_SEVERITY: Record<HazardKind, number> = {
-  other: 0.3,
-  debris: 0.4,
-  pothole: 0.5,
-  poor_visibility: 0.6,
-  aggressive_traffic: 0.7,
-  blocked_lane: 0.8,
-  construction: 0.9,
-  dangerous_junction: 1.0,
-};
+export interface HazardKindsResponse {
+  kinds: HazardKindInfo[];
+}
 
 /** Enforced server-side at internal/hazard/store.go:31. */
 export const HAZARD_NOTES_MAX = 500;
 
+/** Reports from the web are never tied to a direction of travel, so there is
+ *  no heading here: the server treats that as "affects both directions". */
 export interface HazardSubmission {
   location: LatLon;
   kind: HazardKind;
@@ -182,6 +175,9 @@ export interface HazardReport {
   location: LatLon;
   kind: string;
   notes?: string;
+  /** Direction of travel the hazard affects, degrees clockwise from north.
+   *  Absent means both directions. */
+  heading_deg?: number;
   confirmations: number;
   created_at: string;
   expires_at: string;
@@ -222,7 +218,8 @@ export type ErrorCode =
   | 'not_found'
   | 'conflict'
   | 'internal_error'
-  | 'unroutable';
+  | 'unroutable'
+  | 'rate_limited';
 
 export interface ErrorResponse {
   code: ErrorCode;
