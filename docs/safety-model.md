@@ -125,19 +125,38 @@ two are directly comparable and the totals stay meaningful.
 - **Lighting.** Applied *only* when the request is for a night-time ride.
   A `lit` value of NULL means unknown, which we treat as neither lit nor
   unlit rather than assuming the worst.
-- **Hazard reports.** Rider-submitted, decaying toward a 90-day expiry, and
-  weighted by how many other riders confirmed them.
+- **Hazard reports.** Rider-submitted, with a lifetime set by kind (an accident
+  lives hours, a pothole a week; see [hazards.md](hazards.md)). A report fades
+  toward its expiry and is weighted by how many other riders confirmed it.
+  Confirmations extend a hazard's life, up to a per-kind maximum, and riders
+  can say a hazard is gone, which takes it down.
+
+  Directional kinds (a pothole in one lane, glare when heading west) apply only
+  to edges travelling roughly the same way as the reporter, which is why they
+  record a heading. A report made from the planning screen has no heading and
+  applies both ways.
 
   These are the only live signal in the system: everything else is refreshed
   by a batch job, but a rider reporting broken glass expects it to matter now.
   Scores therefore live in an in-memory overlay that is replaced atomically,
-  and each request takes one immutable snapshot — so the search loop needs no
-  locking, and a route cannot change shape halfway through being computed.
+  rebuilt on every report and again every minute so expired hazards stop
+  steering routes, and each request takes one immutable snapshot, so the search
+  loop needs no locking and a route cannot change shape halfway through being
+  computed.
 
-  The weighting is held below collision pressure deliberately. A report is
+  Ordinary hazards are held below collision pressure deliberately. A report is
   unverified and a single person can file one, so hazards nudge routing rather
   than dictate it; corroboration from other riders is what raises their
   influence.
+
+  **Road closures are the exception.** A `road_closed` report claims the road
+  cannot be ridden, and a nudge is the wrong response to that. It adds
+  `15 * n^1.5` times the road's length to its cost for `n` reporting riders,
+  capped at 150: about 16x for one rider, 79x for three. It is still finite,
+  so the router can use the road if the report is wrong or it is the only way
+  through, and the plan says so when it does. It applies to every rider
+  profile, because a closure is a fact about the road and not a comfort
+  preference.
 
 ## Rider profiles
 

@@ -14,7 +14,7 @@
     {
       "key": "authToken",
       "value": "",
-      "description": "JWT for the Planned folder's auth-gated requests. Unused until Phase 6 auth endpoints are implemented."
+      "description": "JWT from POST /v1/auth/register or /v1/auth/login. Required for hazard writes (report, confirm, resolve) and for saved routes."
     }
   ],
   "item": [
@@ -671,22 +671,22 @@
     },
     {
       "name": "Hazards",
-      "description": "Rider-reported hazards, as a live overlay on the safety model. Unlike collision records and elevation — which are refreshed by a batch job — a hazard affects routing immediately: the handler rebuilds the in-memory overlay before it responds (`internal/httpapi/hazard_handler.go`).\n\nReports are accepted anonymously. Sending a Bearer token records you as the author (`optionalAuth`), but is never required.",
+      "description": "Rider-reported hazards, as a live overlay on the safety model. Unlike collision records and elevation, which are refreshed by a batch job, a hazard affects routing straight away, and the overlay is also rebuilt every minute so expired hazards stop steering routes.\n\n**Writing requires a signed-in user** (register or log in, then put the token in the `authToken` collection variable). Reading hazards and kinds is public.\n\nEach kind has its own lifetime, set when the report is created and extended by confirmations up to a maximum. `road_closed` is scored much more steeply than other kinds, growing with the number of riders reporting it, but it never hard-blocks a road. Full design: `docs/hazards.md`.",
       "item": [
         {
-          "name": "Report Hazard",
+          "name": "Report Hazard (planning view, no heading)",
           "request": {
             "method": "POST",
             "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"location\": {\n    \"lat\": 30.2711,\n    \"lon\": -97.7546\n  },\n  \"kind\": \"pothole\",\n  \"notes\": \"Large pothole in the bike lane, hard to see at night.\"\n}"
-            },
             "url": {
               "raw": "{{baseUrl}}/v1/hazards",
               "host": [
@@ -697,7 +697,155 @@
                 "hazards"
               ]
             },
-            "description": "Submit a hazard at a point.\n\n**Body** (`internal/hazard/store.go: Submission`):\n- `location` (required, `{lat, lon}`) — where the hazard is.\n- `kind` (required string) — one of `debris`, `pothole`, `poor_visibility`, `aggressive_traffic`, `blocked_lane`, `construction`, `dangerous_junction`, `other`. These match the CHECK constraint on `hazard_report.kind`.\n- `notes` (optional string, max 500 chars).\n\nNote the field names are `kind` and `notes` — not `type` and `description`. The server decodes with `DisallowUnknownFields`, so a wrong name is a 400 rather than a silently ignored field.\n\nA hazard reaches 30 m in every direction (`hazard.MatchRadiusM`) — wider than the collision radius, because a rider dropping a pin from memory is less precise than a police report filed at a known intersection. Reports expire after 90 days."
+            "description": "Submit a hazard at a point. **Requires a signed-in user** (`Authorization: Bearer {{authToken}}`); without one the answer is `401`.\n\n**Body** (`internal/hazard/store.go: Submission`):\n- `location` (required, `{lat, lon}`): where the hazard is.\n- `kind` (required string): one of the kinds from `GET /v1/hazards/kinds`.\n- `notes` (optional string, max 500 chars).\n- `heading_deg` (optional number, 0 up to but not including 360): the direction of travel the hazard affects, in degrees clockwise from north. **The app fills this in; riders never enter it.** Omit it for a report made from the planning screen, which then affects both directions.\n\nThe server decodes with `DisallowUnknownFields`, so a wrong field name is a `400`, not a silently ignored field.\n\n**Responses**\n- `201`: a new hazard was created.\n- `200`: the report was **merged** into an active hazard of the same kind within its merge radius (50 m for area hazards, 25 m for place-specific ones, and facing roughly the same way for directional kinds). It counts as your confirmation, and the existing hazard is returned.\n- `400`: invalid body, with `details.valid_kinds` for an unknown kind.\n- `401`: not signed in.\n- `429`: too many reports (20 an hour, burst of 5); see `Retry-After`.\n\nThe hazard expires after its kind's lifetime, e.g. 3 hours for `accident`, 7 days for `pothole`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location\": {\n    \"lat\": 30.2711,\n    \"lon\": -97.7546\n  },\n  \"kind\": \"pothole\",\n  \"notes\": \"Large pothole in the bike lane, hard to see at night.\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Report Hazard (during navigation, with heading)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/hazards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "hazards"
+              ]
+            },
+            "description": "The same request as above, as the app sends it while the rider is navigating: `heading_deg` is the rider's direction of travel (here 90, heading east), so a directional kind such as `pothole` penalises eastbound travel on that road and not westbound.\n\nA second report of the same kind nearby and facing roughly the same way merges into this one (`200`); a report facing the opposite way stays separate, since it is probably in the other lane.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location\": {\n    \"lat\": 30.2711,\n    \"lon\": -97.7546\n  },\n  \"kind\": \"pothole\",\n  \"heading_deg\": 90\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Report Hazard (road closed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/hazards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "hazards"
+              ]
+            },
+            "description": "`road_closed` is the one kind with its own steep penalty: about 16x the road's length for one rider, 79x for three, levelling off at 151x. It is large but finite, so the router can still use the road if the report is wrong or it is the only way through. It applies to every rider profile, ignores `heading_deg`, and comes down when it expires or is resolved. A plan whose route still crosses a closure carries a warning and a non-zero `breakdown.closed_road_m`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location\": {\n    \"lat\": 30.2711,\n    \"lon\": -97.7546\n  },\n  \"kind\": \"road_closed\",\n  \"notes\": \"Bridge closed to bikes.\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Report Hazard — Error: not signed in (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/hazards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "hazards"
+              ]
+            },
+            "description": "No `Authorization` header, so the server answers `401` with `WWW-Authenticate: Bearer`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location\": {\n    \"lat\": 30.2711,\n    \"lon\": -97.7546\n  },\n  \"kind\": \"pothole\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Report Hazard — Error: unknown kind (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/hazards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "hazards"
+              ]
+            },
+            "description": "An unknown `kind` is a `400` whose `details.valid_kinds` lists the accepted ones.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location\": {\n    \"lat\": 30.2711,\n    \"lon\": -97.7546\n  },\n  \"kind\": \"meteor_strike\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Hazard Kinds",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/hazards/kinds",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "hazards",
+                "kinds"
+              ]
+            },
+            "description": "Every hazard kind with what a client needs to display and reason about it. Public; clients should read this instead of hard-coding the list.\n\nReturns `{\"kinds\": [...]}`. Each entry has `kind`, `label`, `ttl_s` (how long a fresh report lives), `confirm_extension_s` (what each confirmation adds), `max_life_s` (the cap), `merge_radius_m` (25 or 50) and `directional` (whether `heading_deg` steers routing for this kind)."
           },
           "response": []
         },
@@ -707,7 +855,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/hazards?bbox=-97.80,30.23,-97.70,30.30&limit=200",
+              "raw": "{{baseUrl}}/v1/hazards?bbox=-97.80,30.23,-97.70,30.30&limit=200?bbox=-97.80,30.23,-97.70,30.30&limit=200",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -719,7 +867,7 @@
                 {
                   "key": "bbox",
                   "value": "-97.80,30.23,-97.70,30.30",
-                  "description": "Required. minLon,minLat,maxLon,maxLat — the order is longitude-first, matching GeoJSON rather than the {lat, lon} objects used in request bodies."
+                  "description": "Required. minLon,minLat,maxLon,maxLat. The order is longitude-first, matching GeoJSON rather than the {lat, lon} objects used in request bodies."
                 },
                 {
                   "key": "limit",
@@ -728,7 +876,7 @@
                 }
               ]
             },
-            "description": "Active hazards inside a bounding box. `bbox` is **required** — there is no unbounded listing.\n\nReturns `{\"hazards\": [...], \"count\": N}`. Each report carries `id`, `location`, `kind`, `notes`, `confirmations`, `created_at`, and `expires_at`."
+            "description": "Active hazards inside a bounding box. Public. `bbox` is **required**; there is no unbounded listing. Resolved and expired hazards are not listed.\n\nReturns `{\"hazards\": [...], \"count\": N}`. Each report carries `id`, `location`, `kind`, `notes`, `heading_deg` (absent when the hazard affects both directions), `confirmations`, `created_at`, and `expires_at`."
           },
           "response": []
         },
@@ -736,7 +884,12 @@
           "name": "Confirm Hazard",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/v1/hazards/1/confirm",
               "host": [
@@ -749,7 +902,33 @@
                 "confirm"
               ]
             },
-            "description": "Record corroboration from another rider, which increases the hazard's weight in the cost function. Returns the updated report.\n\nReturns `404 not_found` if the id is unknown or the report has expired."
+            "description": "Say you have seen the hazard too. **Requires sign-in.** Raises its weight in the cost function and extends its life by its kind's confirmation extension, up to the kind's maximum. Returns the updated report.\n\nEach rider can confirm a hazard once, and not their own report.\n\n- `404 not_found`: no active hazard with that id (unknown, expired, or resolved).\n- `409 conflict`: you reported it, or you have already responded to it.\n- `429`: too many responses (60 an hour, burst of 10)."
+          },
+          "response": []
+        },
+        {
+          "name": "Resolve Hazard (\"no longer there\")",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/hazards/1/resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "hazards",
+                "1",
+                "resolve"
+              ]
+            },
+            "description": "Say the hazard is gone. **Requires sign-in.** The original reporter can take their own hazard down alone; otherwise it takes two riders. When it comes down it expires immediately (the response's `expires_at` is then in the past) and is kept as history.\n\nShares its errors and rate limit with Confirm: `404` for no active hazard, `409` if you have already responded, `429` over the limit."
           },
           "response": []
         }

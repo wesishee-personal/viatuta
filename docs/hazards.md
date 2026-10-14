@@ -1,6 +1,7 @@
 # Hazard reporting — spec
 
-Status: **agreed design, not yet implemented**, except where marked ✅.
+Status: **the backend is implemented** (migrations 00007 to 00009). The iOS and
+web clients do not use the new features yet; see "Remaining work" at the end.
 
 Riders report hazards from two places in the iOS app — the route-planning view
 and (later) the live-navigation view. Hazards are stored in Postgres, expire
@@ -13,7 +14,7 @@ described in [safety-model.md](safety-model.md).
 |---|----------|
 | 1 | Each kind has its own lifetime, confirmation extension, and maximum life (table below). |
 | 2 | `road_closed` is **aggressively nudged, never hard-avoided**. The penalty grows with the number of reports. |
-| 3 | Every write is tied to a signed-in user. Anonymous reporting is not allowed. ✅ |
+| 3 | Every write is tied to a signed-in user. Anonymous reporting is not allowed. |
 | 4 | New kinds: `glass`, `road_closed`, `flooding`, `fallen_tree`, `signal_out`, `street_event`, `slippery_surface`, `loose_animal`, plus `accident`. |
 | 5 | Duplicate reports merge: **50 m** for area hazards, **25 m** for place-specific ones. |
 | 6 | Reports record a **heading**. Planning-view reports are bidirectional; navigation reports use the rider's direction of travel. The rider never has to enter a direction. |
@@ -95,7 +96,9 @@ rather than 201). If that rider has already voted on it, nothing changes.
 ## Road closures
 
 `road_closed` does not use the ordinary hazard score, whose largest possible
-penalty is about +2x the edge length. It has its own, much steeper channel:
+penalty is about +2x the edge length. It applies to roads within 20 m of the
+report (tighter than the 30 m ordinary hazards use), so a closure does not shut
+the crossing streets at a junction. It has its own, much steeper channel:
 
 ```
 n       = 1 + distinct confirming riders
@@ -118,12 +121,17 @@ penalty = min(150, 15 * n^1.5)      # added to the edge cost multiplier
   resolved.
 - If the chosen route still crosses an active closure, the plan response
   includes a warning.
-- These numbers are starting values to tune against the Austin graph.
+- These numbers are starting values to tune against the Austin graph. In a
+  live check on a 7 km Austin trip, a single report was already enough to
+  reroute around a closure at every spot tried (detours of up to 1.1 km), so
+  more reporters only change the outcome where the alternative is much longer
+  than about 2 km. If one unverified report should be a gentler nudge, lower
+  `closureBase` in `internal/hazard/hazard.go`.
 
 ## Authentication
 
-- ✅ `POST /v1/hazards` and `POST /v1/hazards/{id}/confirm` require a bearer
-  token (401 otherwise). `resolve` will too.
+- `POST /v1/hazards`, `POST /v1/hazards/{id}/confirm` and
+  `POST /v1/hazards/{id}/resolve` require a bearer token (401 otherwise).
 - `GET /v1/hazards` and `GET /v1/hazards/kinds` stay public: planning a route
   needs no login, and neither does seeing what is on the map.
 - `hazard_report.user_id` stays nullable at the database level, because its
@@ -158,11 +166,14 @@ queued offline cannot be stored twice.
 
 ## Server work beyond the endpoints
 
-- **Periodic overlay refresh, about once a minute.** Today the overlay is
-  rebuilt only when someone submits or confirms a hazard. That was harmless
-  with 90-day lifetimes, but with hours-long lifetimes an expired accident
-  would keep steering routes until the next unrelated report.
+- **Periodic overlay refresh, once a minute.** The overlay is rebuilt on every
+  report, confirmation and resolve, and also every minute, so a hazard that
+  expires stops steering routes within a minute. A rebuild over the 412k-edge
+  Austin graph takes about 50 ms.
 - Expired and resolved rows stay in the table as history.
+- Direction is applied in the overlay query: a directional hazard scores an
+  edge only when the edge's bearing, read at the end nearer the hazard, is
+  within 90 degrees of the hazard's heading.
 
 ## iOS architecture
 
@@ -193,14 +204,17 @@ Planning and navigation share everything except where the location comes from.
 2. **iOS, planning view:** `HazardService`, kinds fetch, map layer, picker.
 3. **iOS, navigation view:** quick mode and outbox, when that view exists.
 
-## Known consequences and loose ends
+## Remaining work
 
-- **The web frontend has no login**, so its Report and Confirm buttons now
-  receive 401. Either add sign-in to the web app or leave it read-only.
-- `docs/safety-model.md` still describes a 90-day hazard expiry and needs
-  updating when phase 1 lands.
-- Anonymous reports can no longer be created, and none existed in the
-  database when this was decided.
-- The routing weights for the new kinds are not yet chosen. Existing weights
-  stay as they are; the new ones are set during phase 1 and tuned against real
-  routes.
+- **The iOS app and the web app do not use any of this yet.** Both still
+  hard-code the original eight kinds. They should read `GET /v1/hazards/kinds`,
+  and the iOS app needs the hazard service, map layer and picker described
+  above. The web app also needs a "no longer there" button.
+- The web app has had a sign-in flow since hazard writes began requiring an
+  account.
+- Routing weights for the newer kinds are first guesses, to be tuned against
+  real routes.
+- The rate limiter and the closure penalty are in memory and per instance,
+  which is fine for the single API container.
+- The Postman collection's Hazards folder is current. Its "Planned" folder
+  still lists the auth and saved-route endpoints as not yet implemented.
