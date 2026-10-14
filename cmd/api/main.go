@@ -17,6 +17,7 @@ import (
 
 	"github.com/wesishee/viatuta/internal/config"
 	"github.com/wesishee/viatuta/internal/graph"
+	"github.com/wesishee/viatuta/internal/hazard"
 	"github.com/wesishee/viatuta/internal/httpapi"
 	"github.com/wesishee/viatuta/internal/store"
 )
@@ -73,6 +74,9 @@ func run() error {
 	if err := api.Hazards().Refresh(ctx, pool, g); err != nil {
 		return err
 	}
+
+	// Then keep it current as hazards expire. Stops when ctx is cancelled.
+	go api.Hazards().RefreshEvery(ctx, pool, g, hazard.OverlayRefreshInterval, logger)
 
 	srv := &http.Server{
 		Addr:    cfg.Addr,

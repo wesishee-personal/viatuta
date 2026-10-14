@@ -502,3 +502,59 @@ func TestOverlayClosureScalesWithReportersAndSkipsOrdinaryScore(t *testing.T) {
 		t.Errorf("a resolved closure still penalises the road: %v", got)
 	}
 }
+
+// TestExpiredHazardKeepsSteeringUntilTheNextRefresh documents WHY the overlay
+// is refreshed periodically: it is a snapshot of the hazards active when it
+// was built, so a hazard that expires afterwards stays in it until something
+// rebuilds it.
+func TestExpiredHazardKeepsSteeringUntilTheNextRefresh(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	g, err := graph.Load(ctx, pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Skipf("no routing graph in this database: %v", err)
+	}
+	e, _, ok := straightTwoWayEdge(g)
+	if !ok {
+		t.Skip("no suitable two-way edge in the graph")
+	}
+	var lat, lon float64
+	if err := pool.QueryRow(ctx, `
+		SELECT ST_Y(ST_LineInterpolatePoint(geom, 0.5)), ST_X(ST_LineInterpolatePoint(geom, 0.5))
+		FROM routing_edge WHERE id = $1`, g.DBID[e]).Scan(&lat, &lon); err != nil {
+		t.Fatal(err)
+	}
+
+	u := newUser(t, pool)
+	rep, created := report(t, pool, u, "accident", geo.LatLon{Lat: lat, Lon: lon})
+	if !created {
+		t.Fatalf("test hazard merged into an existing one (id %d)", rep.ID)
+	}
+
+	idx := NewIndex(g.NumEdges())
+	start := time.Now()
+	if err := idx.Refresh(ctx, pool, g); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("overlay refresh over %d edges took %v", g.NumEdges(), time.Since(start).Round(time.Millisecond))
+	if idx.Snapshot().Scores[e] <= 0 {
+		t.Fatal("the active hazard should score its edge")
+	}
+
+	// The hazard expires...
+	if _, err := pool.Exec(ctx,
+		`UPDATE hazard_report SET expires_at = now() - interval '1 minute' WHERE id = $1`, rep.ID); err != nil {
+		t.Fatal(err)
+	}
+	// ...but the overlay does not know until it is rebuilt.
+	if idx.Snapshot().Scores[e] <= 0 {
+		t.Fatal("expected the stale overlay to still carry the expired hazard")
+	}
+	if err := idx.Refresh(ctx, pool, g); err != nil {
+		t.Fatal(err)
+	}
+	if got := idx.Snapshot().Scores[e]; got != 0 {
+		t.Errorf("after a refresh the expired hazard still scores %v", got)
+	}
+}
