@@ -32,6 +32,10 @@ type Server struct {
 	// the graph because it changes between requests.
 	hazards *hazard.Index
 
+	// Per-user limits on hazard writes; see ratelimit.go.
+	reportLimits *userLimiters
+	voteLimits   *userLimiters
+
 	// signer issues and verifies access tokens. It is nil when no signing
 	// secret is configured, in which case the account endpoints report
 	// themselves unavailable rather than falling back to something insecure.
@@ -55,6 +59,9 @@ func NewServer(cfg config.Config, logger *slog.Logger, pool *store.Pool, g *grap
 		pool:    pool,
 		graph:   g,
 		started: time.Now(),
+
+		reportLimits: newUserLimiters(reportsPerHour, reportBurst),
+		voteLimits:   newUserLimiters(votesPerHour, voteBurst),
 	}
 	if g != nil && pool != nil {
 		s.snapper = graph.NewSnapper(pool, g)
@@ -101,11 +108,11 @@ func (s *Server) Handler() http.Handler {
 	// Writing requires an account, so every report has an author and abuse is
 	// traceable. Reading stays public: planning a route needs no login, and
 	// neither does seeing what is on the map.
-	mux.HandleFunc("POST /v1/hazards", s.requireAuth(s.handleReportHazard))
+	mux.HandleFunc("POST /v1/hazards", s.requireAuth(s.rateLimited(s.reportLimits, "hazard reports", s.handleReportHazard)))
 	mux.HandleFunc("GET /v1/hazards", s.handleListHazards)
 	mux.HandleFunc("GET /v1/hazards/kinds", s.handleListKinds)
-	mux.HandleFunc("POST /v1/hazards/{id}/confirm", s.requireAuth(s.handleConfirmHazard))
-	mux.HandleFunc("POST /v1/hazards/{id}/resolve", s.requireAuth(s.handleResolveHazard))
+	mux.HandleFunc("POST /v1/hazards/{id}/confirm", s.requireAuth(s.rateLimited(s.voteLimits, "hazard responses", s.handleConfirmHazard)))
+	mux.HandleFunc("POST /v1/hazards/{id}/resolve", s.requireAuth(s.rateLimited(s.voteLimits, "hazard responses", s.handleResolveHazard)))
 
 	// Outermost first: a panic inside logging should still be recovered,
 	// and every log line should already have a request ID to report.

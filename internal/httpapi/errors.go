@@ -28,6 +28,7 @@ const (
 	CodeConflict     = "conflict"
 	CodeInternal     = "internal_error"
 	CodeUnroutable   = "unroutable" // no safe path exists under the given profile
+	CodeRateLimited  = "rate_limited"
 )
 
 // writeJSON serializes v as the response body with the given status code.
