@@ -8,6 +8,7 @@ import (
 
 	"github.com/wesishee/viatuta/internal/geo"
 	"github.com/wesishee/viatuta/internal/graph"
+	"github.com/wesishee/viatuta/internal/hazard"
 	"github.com/wesishee/viatuta/internal/routing"
 	"github.com/wesishee/viatuta/internal/safety"
 )
@@ -224,12 +225,12 @@ func (s *Server) handleRoutePlan(w http.ResponseWriter, r *http.Request) {
 	// One immutable hazard snapshot per request: the search loop then reads
 	// it without locking, and the route cannot shift underneath itself if a
 	// report lands mid-computation.
-	var hazardScores []float32
+	var hazards hazard.Snapshot
 	if s.hazards != nil {
-		hazardScores = s.hazards.Snapshot()
+		hazards = s.hazards.Snapshot()
 	}
 
-	model := safety.NewModel(profile).WithHazards(hazardScores)
+	model := safety.NewModel(profile).WithHazards(hazards.Scores, hazards.Closures)
 	opts := routing.Options{
 		EdgeCost: model.EdgeCost,
 		TurnCost: model.TurnCost,
@@ -312,6 +313,15 @@ func (s *Server) handleRoutePlan(w http.ResponseWriter, r *http.Request) {
 				"this route is "+ftoa(resp.DetourRatio)+"x the shortest distance, beyond this profile's limit of "+
 					ftoa(profile.MaxDetourRatio)+"; a less cautious profile would be more direct")
 		}
+	}
+
+	// A route can still cross a closure: the penalty is steep but finite, so
+	// when every way through is closed, or the only detour is enormous, the
+	// router uses the road. Say so plainly rather than let the rider find out.
+	if resp.Breakdown.ClosedRoadM > 0 {
+		resp.Warnings = append(resp.Warnings,
+			"this route passes through "+ftoa(resp.Breakdown.ClosedRoadM)+
+				" m of road that riders have reported closed; check before you ride it")
 	}
 
 	// Alternatives, when asked for. Only single-leg requests get them: with

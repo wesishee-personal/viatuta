@@ -40,6 +40,12 @@ type Kind struct {
 	// Directional kinds affect riders travelling one way (a pothole in the
 	// eastbound lane). Others affect both directions of the road.
 	Directional bool
+
+	// Closure kinds say the road cannot be ridden, which is a different claim
+	// from "this stretch is unpleasant". They bypass the ordinary hazard score
+	// (a gentle nudge) and use the closure penalty, which grows steeply with
+	// the number of riders reporting it. See ClosurePenalty.
+	Closure bool
 }
 
 const (
@@ -58,7 +64,7 @@ var kinds = []Kind{
 		MergeRadiusM: areaMergeM, Directional: true},
 	{Name: "road_closed", Label: "Road closed", Weight: 1.0,
 		TTL: 1 * day, ConfirmExtension: 12 * hour, MaxLife: 7 * day,
-		MergeRadiusM: areaMergeM},
+		MergeRadiusM: areaMergeM, Closure: true},
 	{Name: "construction", Label: "Road work", Weight: 0.9,
 		TTL: 1 * day, ConfirmExtension: 12 * hour, MaxLife: 7 * day,
 		MergeRadiusM: areaMergeM},

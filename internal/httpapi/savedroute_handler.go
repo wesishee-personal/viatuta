@@ -7,6 +7,7 @@ import (
 
 	"github.com/wesishee/viatuta/internal/geo"
 	"github.com/wesishee/viatuta/internal/graph"
+	"github.com/wesishee/viatuta/internal/hazard"
 	"github.com/wesishee/viatuta/internal/routing"
 	"github.com/wesishee/viatuta/internal/safety"
 	"github.com/wesishee/viatuta/internal/savedroute"
@@ -67,11 +68,11 @@ func (s *Server) handleSaveRoute(w http.ResponseWriter, r *http.Request) {
 		snaps[i] = sn
 	}
 
-	var hazardScores []float32
+	var hazards hazard.Snapshot
 	if s.hazards != nil {
-		hazardScores = s.hazards.Snapshot()
+		hazards = s.hazards.Snapshot()
 	}
-	model := safety.NewModel(profile).WithHazards(hazardScores)
+	model := safety.NewModel(profile).WithHazards(hazards.Scores, hazards.Closures)
 
 	edges, _, length, _, err := s.routeLegs(snaps, routing.Options{
 		EdgeCost: model.EdgeCost,

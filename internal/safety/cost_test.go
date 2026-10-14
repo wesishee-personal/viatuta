@@ -265,3 +265,54 @@ func TestProfileByName(t *testing.T) {
 		t.Errorf("empty name gave %q, want comfortable", p.Name)
 	}
 }
+
+// TestClosurePenaltyAppliesToEveryProfile: a closure is a fact about the road,
+// not a comfort preference, so even the distance-only profile must go around.
+func TestClosurePenaltyAppliesToEveryProfile(t *testing.T) {
+	g := oneEdgeGraph(1, graph.InfraNone, graph.SurfacePaved, 0, graph.LitYes)
+	for _, p := range []Profile{Cautious, Comfortable, Confident, Shortest} {
+		base := NewModel(p).Multiplier(g, 0)
+		closed := NewModel(p).WithHazards(nil, []float32{50}).Multiplier(g, 0)
+		if got := closed - base; math.Abs(got-50) > 1e-4 {
+			t.Errorf("%s: closure added %v to the multiplier, want 50", p.Name, got)
+		}
+	}
+}
+
+// TestClosureIsFiniteAndDoesNotForbidTheEdge: aggressive, never a hard avoid.
+func TestClosureIsFiniteAndDoesNotForbidTheEdge(t *testing.T) {
+	g := oneEdgeGraph(4, graph.InfraNone, graph.SurfacePaved, 0, graph.LitYes)
+	for _, p := range []Profile{Cautious, Comfortable, Confident, Shortest} {
+		open := NewModel(p)
+		closed := NewModel(p).WithHazards(nil, []float32{150})
+		if closed.Allow(g, 0) != open.Allow(g, 0) {
+			t.Errorf("%s: a closure changed whether the edge is allowed", p.Name)
+		}
+		cost := closed.EdgeCost(g, 0)
+		if math.IsInf(cost, 0) || math.IsNaN(cost) {
+			t.Errorf("%s: closed edge cost %v is not finite", p.Name, cost)
+		}
+		if cost <= open.EdgeCost(g, 0) {
+			t.Errorf("%s: a closure did not raise the edge cost", p.Name)
+		}
+	}
+}
+
+func TestClosureSnapshotShorterThanGraphIsSafe(t *testing.T) {
+	g := oneEdgeGraph(1, graph.InfraNone, graph.SurfacePaved, 0, graph.LitYes)
+	m := NewModel(Comfortable).WithHazards(nil, []float32{}) // a stale snapshot
+	if got, want := m.Multiplier(g, 0), NewModel(Comfortable).Multiplier(g, 0); got != want {
+		t.Errorf("multiplier = %v, want %v when the closure snapshot does not cover the edge", got, want)
+	}
+}
+
+func TestSummariseReportsClosedRoadDistance(t *testing.T) {
+	g := oneEdgeGraph(1, graph.InfraNone, graph.SurfacePaved, 0, graph.LitYes) // 100 m edge
+	if got := NewModel(Comfortable).Summarise(g, []int32{0}).ClosedRoadM; got != 0 {
+		t.Errorf("ClosedRoadM = %v with no closure, want 0", got)
+	}
+	b := NewModel(Comfortable).WithHazards(nil, []float32{15}).Summarise(g, []int32{0})
+	if b.ClosedRoadM != 100 {
+		t.Errorf("ClosedRoadM = %v, want 100", b.ClosedRoadM)
+	}
+}

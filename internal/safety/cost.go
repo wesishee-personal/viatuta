@@ -16,14 +16,28 @@ type Model struct {
 	// loop, and a route cannot change shape halfway through being computed
 	// because someone filed a report.
 	Hazards []float32
+
+	// Closures holds, per edge, the extra cost multiplier for a road reported
+	// closed (0 when it is not). It comes from the same snapshot as Hazards.
+	Closures []float32
 }
 
 func NewModel(p Profile) *Model { return &Model{Profile: p} }
 
-// WithHazards attaches a hazard snapshot.
-func (m *Model) WithHazards(scores []float32) *Model {
+// WithHazards attaches a hazard snapshot: ordinary hazard scores and road
+// closure penalties.
+func (m *Model) WithHazards(scores, closures []float32) *Model {
 	m.Hazards = scores
+	m.Closures = closures
 	return m
+}
+
+// closurePenalty is the extra multiplier for a road reported closed.
+func (m *Model) closurePenalty(e int32) float64 {
+	if int(e) >= len(m.Closures) {
+		return 0
+	}
+	return float64(m.Closures[e])
 }
 
 // hazardScore reads the snapshot defensively: a graph reloaded while a
@@ -68,6 +82,13 @@ func (m *Model) Multiplier(g *graph.Graph, e int32) float64 {
 	if hs := m.hazardScore(e); hs > 0 {
 		mult += p.WeightHazard * HazardPenaltyScale * hs
 	}
+
+	// A closure is a fact about the road, not a comfort preference, so it is
+	// deliberately NOT scaled by the rider's weights: even the "shortest"
+	// profile should go around a closed road. It is large but finite, so the
+	// router can still use the road if a report is wrong or it is the only
+	// way through.
+	mult += m.closurePenalty(e)
 
 	if p.Night && g.Lit[e] == graph.LitNo {
 		mult += p.WeightLight * UnlitPenalty
@@ -184,6 +205,10 @@ type Breakdown struct {
 
 	// HazardM is distance within range of an active rider-reported hazard.
 	HazardM float64 `json:"hazard_m"`
+
+	// ClosedRoadM is distance along roads reported closed. Anything above
+	// zero means the route goes through a reported closure.
+	ClosedRoadM float64 `json:"closed_road_m"`
 }
 
 var ltsNames = [5]string{"unknown", "lts1", "lts2", "lts3", "lts4"}
@@ -232,12 +257,16 @@ func (m *Model) Summarise(g *graph.Graph, edges []int32) Breakdown {
 		if m.hazardScore(e) > 0 {
 			b.HazardM += l
 		}
+		if m.closurePenalty(e) > 0 {
+			b.ClosedRoadM += l
+		}
 	}
 	b.CollisionExposureM = math.Round(b.CollisionExposureM*10) / 10
 	b.ClimbM = math.Round(b.ClimbM*10) / 10
 	b.DescentM = math.Round(b.DescentM*10) / 10
 	b.SteepM = math.Round(b.SteepM*10) / 10
 	b.HazardM = math.Round(b.HazardM*10) / 10
+	b.ClosedRoadM = math.Round(b.ClosedRoadM*10) / 10
 	for k, v := range b.ByLTS {
 		b.ByLTS[k] = math.Round(v*10) / 10
 	}

@@ -399,7 +399,7 @@ func TestOverlayAppliesDirectionalHazardToOneDirectionOnly(t *testing.T) {
 		if err := idx.Refresh(ctx, pool, g); err != nil {
 			t.Fatal(err)
 		}
-		s := idx.Snapshot()
+		s := idx.Snapshot().Scores
 		return s[e], s[r]
 	}
 
@@ -432,4 +432,73 @@ func straightTwoWayEdge(g *graph.Graph) (e, reverse int32, ok bool) {
 		}
 	}
 	return 0, 0, false
+}
+
+// TestOverlayClosureScalesWithReportersAndSkipsOrdinaryScore runs the closure
+// query on the real graph: the penalty must follow the number of riders, apply
+// in both directions, and not also appear as an ordinary hazard score.
+func TestOverlayClosureScalesWithReportersAndSkipsOrdinaryScore(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	g, err := graph.Load(ctx, pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Skipf("no routing graph in this database: %v", err)
+	}
+	e, r, ok := straightTwoWayEdge(g)
+	if !ok {
+		t.Skip("no suitable two-way edge in the graph")
+	}
+	var lat, lon float64
+	if err := pool.QueryRow(ctx, `
+		SELECT ST_Y(ST_LineInterpolatePoint(geom, 0.5)), ST_X(ST_LineInterpolatePoint(geom, 0.5))
+		FROM routing_edge WHERE id = $1`, g.DBID[e]).Scan(&lat, &lon); err != nil {
+		t.Fatal(err)
+	}
+	where := geo.LatLon{Lat: lat, Lon: lon}
+
+	reporter := newUser(t, pool)
+	heading := float64(g.BearingStart[e]) // a heading must be ignored for closures
+	rep, created := reportHeading(t, pool, reporter, "road_closed", where, &heading)
+	if !created {
+		t.Fatalf("test hazard merged into an existing one (id %d)", rep.ID)
+	}
+	t.Cleanup(func() { pool.Exec(ctx, `DELETE FROM hazard_report WHERE id = $1`, rep.ID) }) //nolint:errcheck
+
+	refresh := func() Snapshot {
+		idx := NewIndex(g.NumEdges())
+		if err := idx.Refresh(ctx, pool, g); err != nil {
+			t.Fatal(err)
+		}
+		return idx.Snapshot()
+	}
+
+	snap := refresh()
+	want1 := float32(ClosurePenalty(1))
+	if snap.Closures[e] != want1 || snap.Closures[r] != want1 {
+		t.Errorf("one report: closure on edge/reverse = %v/%v, want %v on both", snap.Closures[e], snap.Closures[r], want1)
+	}
+	if snap.Scores[e] != 0 {
+		t.Errorf("a closure also produced an ordinary hazard score of %v", snap.Scores[e])
+	}
+
+	for i := 0; i < 2; i++ { // two more riders confirm: three in all
+		if _, err := Confirm(ctx, pool, rep.ID, newUser(t, pool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap = refresh()
+	if want3 := float32(ClosurePenalty(3)); snap.Closures[e] != want3 {
+		t.Errorf("three reporters: closure = %v, want %v", snap.Closures[e], want3)
+	}
+	if snap.Closures[e] <= want1 {
+		t.Error("more reporters did not make the closure heavier")
+	}
+
+	if _, err := Resolve(ctx, pool, rep.ID, reporter); err != nil {
+		t.Fatal(err)
+	}
+	if got := refresh().Closures[e]; got != 0 {
+		t.Errorf("a resolved closure still penalises the road: %v", got)
+	}
 }

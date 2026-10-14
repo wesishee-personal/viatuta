@@ -44,35 +44,47 @@ type Report struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 }
 
-// Index holds the current per-edge hazard scores.
+// Snapshot is an immutable view of the hazard overlay, indexed by graph edge.
+type Snapshot struct {
+	// Scores are ordinary hazard scores, 0..1 per edge.
+	Scores []float32
+
+	// Closures are extra cost multipliers for edges reported closed, 0 where
+	// there is no closure. Unlike Scores they are not a 0..1 "how bad" value:
+	// they are added straight to the edge's cost multiplier. See ClosurePenalty.
+	Closures []float32
+}
+
+// Index holds the current per-edge hazard overlay.
 //
-// The scores are read on every edge evaluation inside the search loop, and
-// written whenever a rider submits a report. Taking a lock per edge would
-// dominate the search, so the whole slice is swapped atomically instead: a
+// The overlay is read on every edge evaluation inside the search loop, and
+// written whenever the set of hazards changes. Taking a lock per edge would
+// dominate the search, so the whole snapshot is swapped atomically instead: a
 // request takes one immutable snapshot at the start and reads it without
 // synchronisation thereafter.
 type Index struct {
-	scores atomic.Pointer[[]float32]
+	snap atomic.Pointer[Snapshot]
 }
 
 func NewIndex(numEdges int) *Index {
 	idx := &Index{}
-	empty := make([]float32, numEdges)
-	idx.scores.Store(&empty)
+	idx.snap.Store(&Snapshot{
+		Scores:   make([]float32, numEdges),
+		Closures: make([]float32, numEdges),
+	})
 	return idx
 }
 
-// Snapshot returns the current scores. The slice must not be modified.
-func (i *Index) Snapshot() []float32 {
-	p := i.scores.Load()
-	if p == nil {
-		return nil
+// Snapshot returns the current overlay. The slices must not be modified.
+func (i *Index) Snapshot() Snapshot {
+	if p := i.snap.Load(); p != nil {
+		return *p
 	}
-	return *p
+	return Snapshot{}
 }
 
-// replace swaps in a new score set.
-func (i *Index) replace(s []float32) { i.scores.Store(&s) }
+// replace swaps in a new overlay.
+func (i *Index) replace(s Snapshot) { i.snap.Store(&s) }
 
 // Refresh recomputes every edge's hazard score from the database.
 //
@@ -83,6 +95,7 @@ func (i *Index) replace(s []float32) { i.scores.Store(&s) }
 // frequent, patch incrementally instead.
 func (i *Index) Refresh(ctx context.Context, pool *pgxpool.Pool, g *graph.Graph) error {
 	scores := make([]float32, g.NumEdges())
+	closures := make([]float32, g.NumEdges())
 
 	// Four factors per hazard, mirroring collision pressure so the two signals
 	// are comparable:
@@ -119,8 +132,9 @@ func (i *Index) Refresh(ctx context.Context, pool *pgxpool.Pool, g *graph.Graph)
 			                    THEN e.bearing_start ELSE e.bearing_end END)::int
 			               - h.heading_deg + 540) % 360 - 180) <= 90)
 			WHERE h.expires_at > now()
+			  AND NOT (h.kind = ANY($5::text[]))
 		) matched
-		GROUP BY edge_id`, kindWeightsJSON(), matchRadiusDeg, float64(MatchRadiusM), directionalKinds())
+		GROUP BY edge_id`, kindWeightsJSON(), matchRadiusDeg, float64(MatchRadiusM), directionalKinds(), closureKinds())
 	if err != nil {
 		return fmt.Errorf("hazard: querying scores: %w", err)
 	}
@@ -145,7 +159,50 @@ func (i *Index) Refresh(ctx context.Context, pool *pgxpool.Pool, g *graph.Graph)
 		return fmt.Errorf("hazard: reading scores: %w", err)
 	}
 
-	i.replace(scores)
+	if err := refreshClosures(ctx, pool, g, closures); err != nil {
+		return err
+	}
+
+	i.replace(Snapshot{Scores: scores, Closures: closures})
+	return nil
+}
+
+// refreshClosures fills closures[edge] for every edge near an active closure.
+//
+// The penalty depends on how many riders reported the closure (the original
+// report plus each confirmation), taking the largest where several closures
+// reach the same edge. There is deliberately no fade with age and no distance
+// decay: a closure is as closed at hour twenty as at hour one, and it comes
+// down by expiring or being resolved, not by weakening.
+func refreshClosures(ctx context.Context, pool *pgxpool.Pool, g *graph.Graph, closures []float32) error {
+	rows, err := pool.Query(ctx, `
+		SELECT e.id, max(1 + h.confirmations)
+		FROM hazard_report h
+		JOIN routing_edge e
+		  ON e.geom && ST_Expand(h.geom, $2::double precision)
+		 AND ST_DWithin(h.geom::geography, e.geom::geography, $3::double precision)
+		WHERE h.expires_at > now()
+		  AND h.kind = ANY($1::text[])
+		GROUP BY e.id`, closureKinds(), matchRadiusDeg, float64(ClosureRadiusM))
+	if err != nil {
+		return fmt.Errorf("hazard: querying closures: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var edgeID int64
+		var reporters int
+		if err := rows.Scan(&edgeID, &reporters); err != nil {
+			return fmt.Errorf("hazard: scanning closure: %w", err)
+		}
+		// As above: translate the database id to a graph position.
+		if idx, ok := g.IndexOfDBID(edgeID); ok {
+			closures[idx] = float32(ClosurePenalty(reporters))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("hazard: reading closures: %w", err)
+	}
 	return nil
 }
 
@@ -207,4 +264,43 @@ func directionalKinds() []string {
 		}
 	}
 	return out
+}
+
+// closureKinds lists the kinds scored as closures.
+func closureKinds() []string {
+	var out []string
+	for _, k := range kinds {
+		if k.Closure {
+			out = append(out, k.Name)
+		}
+	}
+	return out
+}
+
+// Closure penalty parameters. These are starting values to tune against real
+// routes, not measurements.
+const (
+	// ClosureRadiusM is how far from the reported point a road counts as
+	// closed. Tighter than MatchRadiusM: a closure is a claim about a road,
+	// and a wide radius would close the crossing streets at a junction too.
+	ClosureRadiusM = 20
+
+	closureBase     = 15.0
+	closureExponent = 1.5
+	closureCap      = 150.0
+)
+
+// ClosurePenalty is the extra cost multiplier for a road reported closed by
+// `reporters` riders: one report makes the road about 16 times as expensive,
+// three make it about 79 times, and it levels off at 151 times.
+//
+// It is aggressive and it is finite, on purpose. A closure report is
+// unverified, so the router must be able to use the road if the report is
+// wrong or it is the only way through. Many independent reports make that
+// progressively less likely to be worth it.
+func ClosurePenalty(reporters int) float64 {
+	if reporters <= 0 {
+		return 0
+	}
+	return math.Min(closureCap, closureBase*math.Pow(float64(reporters), closureExponent))
 }

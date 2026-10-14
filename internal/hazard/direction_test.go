@@ -83,3 +83,49 @@ func TestDirectionalKindsMatchTheDesign(t *testing.T) {
 		}
 	}
 }
+
+func TestClosurePenaltyGrowsWithReportsAndStaysFinite(t *testing.T) {
+	cases := []struct {
+		reporters int
+		want      float64
+	}{
+		{0, 0},
+		{1, 15},
+		{2, 42.43},
+		{3, 77.94},
+		{4, 120},
+		{5, 150}, // 167.7 uncapped
+		{50, 150},
+	}
+	for _, tc := range cases {
+		got := ClosurePenalty(tc.reporters)
+		if got < tc.want-0.01 || got > tc.want+0.01 {
+			t.Errorf("ClosurePenalty(%d) = %.2f, want %.2f", tc.reporters, got, tc.want)
+		}
+	}
+
+	prev := 0.0
+	for n := 1; n <= 40; n++ {
+		p := ClosurePenalty(n)
+		if p < prev {
+			t.Errorf("penalty fell from %v to %v at %d reporters", prev, p, n)
+		}
+		if p > 150 {
+			t.Errorf("penalty %v at %d reporters exceeds the cap", p, n)
+		}
+		prev = p
+	}
+}
+
+// TestOnlyRoadClosedIsAClosure pins the design: a closure is aggressive but
+// the ordinary kinds, including road work, only nudge.
+func TestOnlyRoadClosedIsAClosure(t *testing.T) {
+	got := closureKinds()
+	if len(got) != 1 || got[0] != "road_closed" {
+		t.Errorf("closure kinds = %v, want [road_closed]", got)
+	}
+	k, _ := Lookup("road_closed")
+	if k.Directional {
+		t.Error("a closed road is closed in both directions; road_closed must not be directional")
+	}
+}
