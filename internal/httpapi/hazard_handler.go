@@ -19,7 +19,7 @@ func (s *Server) handleReportHazard(w http.ResponseWriter, r *http.Request) {
 	if err := sub.Validate(); err != nil {
 		details := map[string]string{"hazard": err.Error()}
 		if errors.Is(err, hazard.ErrUnknownKind) {
-			details["valid_kinds"] = strings.Join(kindNames(), ", ")
+			details["valid_kinds"] = strings.Join(hazard.Names(), ", ")
 		}
 		writeValidationError(w, "invalid hazard report", details)
 		return
@@ -111,17 +111,32 @@ func (s *Server) handleConfirmHazard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rep)
 }
 
-// kindNames lists accepted hazard kinds for error messages.
-func kindNames() []string {
-	out := make([]string, 0, len(hazard.Kinds))
-	for k := range hazard.Kinds {
-		out = append(out, k)
-	}
-	// Sorted so the error message is stable between requests.
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j] < out[j-1]; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
+// KindInfo describes a hazard kind to clients.
+type KindInfo struct {
+	Kind           string  `json:"kind"`
+	Label          string  `json:"label"`
+	TTLSeconds     int64   `json:"ttl_s"`
+	ConfirmExtendS int64   `json:"confirm_extension_s"`
+	MaxLifeSeconds int64   `json:"max_life_s"`
+	MergeRadiusM   float64 `json:"merge_radius_m"`
+	Directional    bool    `json:"directional"`
+}
+
+// handleListKinds returns every hazard kind with its lifetime, so clients
+// need not hard-code the table.
+func (s *Server) handleListKinds(w http.ResponseWriter, r *http.Request) {
+	all := hazard.All()
+	out := make([]KindInfo, len(all))
+	for i, k := range all {
+		out[i] = KindInfo{
+			Kind:           k.Name,
+			Label:          k.Label,
+			TTLSeconds:     int64(k.TTL.Seconds()),
+			ConfirmExtendS: int64(k.ConfirmExtension.Seconds()),
+			MaxLifeSeconds: int64(k.MaxLife.Seconds()),
+			MergeRadiusM:   k.MergeRadiusM,
+			Directional:    k.Directional,
 		}
 	}
-	return out
+	writeJSON(w, http.StatusOK, map[string]any{"kinds": out})
 }

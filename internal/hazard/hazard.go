@@ -21,19 +21,6 @@ import (
 	"github.com/wesishee/viatuta/internal/graph"
 )
 
-// Kinds a rider may report. These match the CHECK constraint on
-// hazard_report.kind.
-var Kinds = map[string]float64{
-	"debris":             0.4,
-	"pothole":            0.5,
-	"poor_visibility":    0.6,
-	"aggressive_traffic": 0.7,
-	"blocked_lane":       0.8,
-	"construction":       0.9,
-	"dangerous_junction": 1.0,
-	"other":              0.3,
-}
-
 // MatchRadiusM is how far a hazard's influence reaches.
 //
 // Wider than the collision radius because a rider dropping a pin from memory is
@@ -158,7 +145,11 @@ const matchRadiusDeg = 0.0005
 // weights live in Go beside their documentation rather than being duplicated
 // as a literal inside the query.
 func kindWeightsJSON() string {
-	b, err := json.Marshal(Kinds)
+	weights := make(map[string]float64, len(kinds))
+	for _, k := range kinds {
+		weights[k.Name] = k.Weight
+	}
+	b, err := json.Marshal(weights)
 	if err != nil {
 		return "{}" // unreachable for a map of string to float64
 	}

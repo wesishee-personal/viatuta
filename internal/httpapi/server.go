@@ -103,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	// neither does seeing what is on the map.
 	mux.HandleFunc("POST /v1/hazards", s.requireAuth(s.handleReportHazard))
 	mux.HandleFunc("GET /v1/hazards", s.handleListHazards)
+	mux.HandleFunc("GET /v1/hazards/kinds", s.handleListKinds)
 	mux.HandleFunc("POST /v1/hazards/{id}/confirm", s.requireAuth(s.handleConfirmHazard))
 
 	// Outermost first: a panic inside logging should still be recovered,
