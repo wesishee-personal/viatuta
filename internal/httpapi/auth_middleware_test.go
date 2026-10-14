@@ -145,45 +145,6 @@ func TestRequireAuthRejectsForeignToken(t *testing.T) {
 	}
 }
 
-// TestOptionalAuthAllowsAnonymous checks the hazard-reporting path: no token
-// is fine, and a bad token is treated as no token rather than as a failure.
-func TestOptionalAuthAllowsAnonymous(t *testing.T) {
-	s := authServer(t)
-
-	for _, header := range []string{"", "Bearer nonsense"} {
-		var seen string
-		r := httptest.NewRequest(http.MethodPost, "/", nil)
-		if header != "" {
-			r.Header.Set("Authorization", header)
-		}
-		rec := httptest.NewRecorder()
-		s.optionalAuth(probe(&seen))(rec, r)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("header %q: status = %d, want 200", header, rec.Code)
-		}
-		if seen != "" {
-			t.Errorf("header %q: user = %q, want anonymous", header, seen)
-		}
-	}
-}
-
-func TestOptionalAuthAttachesUserWhenPresent(t *testing.T) {
-	s := authServer(t)
-	signer, _ := auth.NewSigner(testSecret)
-	token, _, _ := signer.Issue("user-xyz", "wes@example.com")
-
-	var seen string
-	r := httptest.NewRequest(http.MethodPost, "/", nil)
-	r.Header.Set("Authorization", "Bearer "+token)
-	rec := httptest.NewRecorder()
-	s.optionalAuth(probe(&seen))(rec, r)
-
-	if seen != "user-xyz" {
-		t.Errorf("user = %q, want user-xyz", seen)
-	}
-}
-
 // TestAccountEndpointsDisabledWithoutSecret checks the fail-closed behaviour:
 // with no signing secret the server refuses account operations rather than
 // signing tokens with something guessable.

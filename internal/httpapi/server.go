@@ -98,11 +98,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/routes/{id}", s.requireAuth(s.handleDeleteRoute))
 
 	// --- Hazard reports ----------------------------------------------
-	// Anonymous reports are accepted, but an author is recorded when the
-	// caller is signed in — which is what makes abuse traceable later.
-	mux.HandleFunc("POST /v1/hazards", s.optionalAuth(s.handleReportHazard))
+	// Writing requires an account, so every report has an author and abuse is
+	// traceable. Reading stays public: planning a route needs no login, and
+	// neither does seeing what is on the map.
+	mux.HandleFunc("POST /v1/hazards", s.requireAuth(s.handleReportHazard))
 	mux.HandleFunc("GET /v1/hazards", s.handleListHazards)
-	mux.HandleFunc("POST /v1/hazards/{id}/confirm", s.optionalAuth(s.handleConfirmHazard))
+	mux.HandleFunc("POST /v1/hazards/{id}/confirm", s.requireAuth(s.handleConfirmHazard))
 
 	// Outermost first: a panic inside logging should still be recovered,
 	// and every log line should already have a request ID to report.

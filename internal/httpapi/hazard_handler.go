@@ -9,11 +9,8 @@ import (
 	"github.com/wesishee/viatuta/internal/hazard"
 )
 
-// handleReportHazard accepts a rider-submitted hazard.
-//
-// Reports are anonymous for now; the user_id column is nullable to match.
-// Requiring an account arrives with authentication, at which point the
-// submitter can be recorded and abuse becomes traceable.
+// handleReportHazard accepts a rider-submitted hazard. The route is behind
+// requireAuth, so the author is always known.
 func (s *Server) handleReportHazard(w http.ResponseWriter, r *http.Request) {
 	var sub hazard.Submission
 	if !decodeJSON(w, r, &sub) {
@@ -28,14 +25,7 @@ func (s *Server) handleReportHazard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Record the author when the caller is signed in; nil keeps the report
-	// anonymous, which the nullable column allows.
-	var userID *string
-	if id := UserIDFrom(r.Context()); id != "" {
-		userID = &id
-	}
-
-	rep, err := hazard.Create(r.Context(), s.pool, sub, userID)
+	rep, err := hazard.Create(r.Context(), s.pool, sub, UserIDFrom(r.Context()))
 	if err != nil {
 		writeInternalError(w, s.logger, err)
 		return

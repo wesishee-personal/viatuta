@@ -36,9 +36,10 @@ func (s Submission) Validate() error {
 
 // Create stores a hazard report and returns it.
 //
-// userID may be nil: reports are accepted anonymously for now, and the column
-// is nullable to match. Requiring an account arrives with authentication.
-func Create(ctx context.Context, pool *pgxpool.Pool, s Submission, userID *string) (Report, error) {
+// userID is the reporting account. The column stays nullable only because
+// its foreign key is ON DELETE SET NULL: deleting an account keeps the safety
+// data but drops the author.
+func Create(ctx context.Context, pool *pgxpool.Pool, s Submission, userID string) (Report, error) {
 	var r Report
 	err := pool.QueryRow(ctx, `
 		INSERT INTO hazard_report (user_id, geom, kind, notes)

@@ -56,36 +56,6 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// optionalAuth attaches the user when a valid token is present but allows the
-// request through when it is not.
-//
-// Used for endpoints that work anonymously but record the author when known,
-// such as hazard reports.
-func (s *Server) optionalAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if s.signer == nil {
-			next(w, r)
-			return
-		}
-		token, ok := bearerToken(r)
-		if !ok {
-			next(w, r)
-			return
-		}
-		claims, err := s.signer.Verify(token)
-		if err != nil {
-			// A bad token on an optional route is treated as no token. The
-			// alternative — failing the request — would make a stale token
-			// worse than none at all.
-			next(w, r)
-			return
-		}
-		ctx := context.WithValue(r.Context(), userIDKey, claims.UserID())
-		ctx = context.WithValue(ctx, userEmailKey, claims.Email)
-		next(w, r.WithContext(ctx))
-	}
-}
-
 // bearerToken extracts a token from the Authorization header.
 func bearerToken(r *http.Request) (string, bool) {
 	h := r.Header.Get("Authorization")
