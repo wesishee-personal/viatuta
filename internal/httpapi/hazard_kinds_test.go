@@ -38,6 +38,12 @@ func TestListKindsIsPublicAndComplete(t *testing.T) {
 	if got := byKind["accident"].TTLSeconds; got != 3*3600 {
 		t.Errorf("accident ttl_s = %d, want %d", got, 3*3600)
 	}
+	if k := byKind["road_closed"]; !k.Closure || k.Weight <= 0 {
+		t.Errorf("road_closed should be flagged as a closure with a weight, got %+v", k)
+	}
+	if byKind["pothole"].Closure {
+		t.Error("pothole must not be flagged as a closure")
+	}
 	if got := byKind["pothole"].TTLSeconds; got != 7*24*3600 {
 		t.Errorf("pothole ttl_s = %d, want %d", got, 7*24*3600)
 	}

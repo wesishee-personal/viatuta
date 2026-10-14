@@ -164,6 +164,14 @@ type KindInfo struct {
 	MaxLifeSeconds int64   `json:"max_life_s"`
 	MergeRadiusM   float64 `json:"merge_radius_m"`
 	Directional    bool    `json:"directional"`
+
+	// Weight is the kind's routing influence, 0..1. Clients use it to show
+	// serious hazards more prominently than minor ones.
+	Weight float64 `json:"weight"`
+
+	// Closure marks kinds that say the road cannot be ridden. They are scored
+	// far more steeply than other hazards and are worth drawing differently.
+	Closure bool `json:"closure"`
 }
 
 // handleListKinds returns every hazard kind with its lifetime, so clients
@@ -180,6 +188,8 @@ func (s *Server) handleListKinds(w http.ResponseWriter, r *http.Request) {
 			MaxLifeSeconds: int64(k.MaxLife.Seconds()),
 			MergeRadiusM:   k.MergeRadiusM,
 			Directional:    k.Directional,
+			Weight:         k.Weight,
+			Closure:        k.Closure,
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"kinds": out})
