@@ -38,13 +38,28 @@ const ResolveVotesNeeded = 2
 const mergeLockKey = 7263001
 
 const reportColumns = `id, ST_Y(geom), ST_X(geom), kind, coalesce(notes, ''),
-	confirmations, created_at, expires_at`
+	heading_deg, confirmations, created_at, expires_at`
 
 // Submission is a new hazard report from a rider.
 type Submission struct {
 	Location geo.LatLon `json:"location"`
 	Kind     string     `json:"kind"`
 	Notes    string     `json:"notes,omitempty"`
+
+	// HeadingDeg is the direction the rider was travelling, in degrees
+	// clockwise from north, if they were travelling. The app fills it in;
+	// the rider never enters it. Absent means the report is not tied to a
+	// direction (made from the planning screen) and affects both.
+	HeadingDeg *float64 `json:"heading_deg,omitempty"`
+}
+
+// heading returns the heading as stored: whole degrees in 0..359, or nil.
+func (s Submission) heading() *int {
+	if s.HeadingDeg == nil {
+		return nil
+	}
+	h := int(math.Round(*s.HeadingDeg)) % 360 // 359.6 rounds to 360, which is 0
+	return &h
 }
 
 // Validate checks a submission before it reaches the database.
@@ -57,6 +72,9 @@ func (s Submission) Validate() error {
 	}
 	if len(s.Notes) > 500 {
 		return fmt.Errorf("notes must be at most 500 characters")
+	}
+	if h := s.HeadingDeg; h != nil && (math.IsNaN(*h) || *h < 0 || *h >= 360) {
+		return fmt.Errorf("heading_deg must be at least 0 and below 360")
 	}
 	return nil
 }
@@ -117,11 +135,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, s Submission, userID string
 	// created_at and expires_at both come from now(), which is fixed for the
 	// statement, so the lifetime is exactly the kind's TTL.
 	rep, err := scanReport(tx.QueryRow(ctx, `
-		INSERT INTO hazard_report (user_id, geom, kind, notes, expires_at)
+		INSERT INTO hazard_report (user_id, geom, kind, notes, expires_at, heading_deg)
 		VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326), $4, NULLIF($5, ''),
-		        now() + make_interval(secs => $6))
+		        now() + make_interval(secs => $6), $7)
 		RETURNING `+reportColumns,
-		userID, s.Location.Lon, s.Location.Lat, s.Kind, s.Notes, kind.TTL.Seconds()))
+		userID, s.Location.Lon, s.Location.Lat, s.Kind, s.Notes, kind.TTL.Seconds(), s.heading()))
 	if err != nil {
 		return Report{}, false, fmt.Errorf("hazard: creating report: %w", err)
 	}
@@ -140,6 +158,16 @@ func findMergeTarget(ctx context.Context, tx pgx.Tx, s Submission, kind Kind) (i
 	// latitude away from the equator.
 	box := degreesFor(kind.MergeRadiusM, s.Location.Lat)
 
+	// Directional hazards merge only with a report facing roughly the same
+	// way: a pothole seen heading east and one seen heading west are probably
+	// two potholes, one in each lane. A missing heading on either side means
+	// "both directions", which is compatible with anything. Kinds that are not
+	// directional ignore heading entirely.
+	var heading any
+	if h := s.heading(); h != nil && kind.Directional {
+		heading = *h
+	}
+
 	var id int64
 	err := tx.QueryRow(ctx, `
 		WITH p AS (SELECT ST_SetSRID(ST_MakePoint($2, $3), 4326) AS g)
@@ -149,9 +177,11 @@ func findMergeTarget(ctx context.Context, tx pgx.Tx, s Submission, kind Kind) (i
 		  AND h.expires_at > now()
 		  AND h.geom && ST_Expand(p.g, $5::double precision)
 		  AND ST_DWithin(h.geom::geography, p.g::geography, $4::double precision)
+		  AND ($6::int IS NULL OR h.heading_deg IS NULL
+		       OR abs(((h.heading_deg - $6::int) + 540) % 360 - 180) <= $7::int)
 		ORDER BY ST_Distance(h.geom::geography, p.g::geography)
 		LIMIT 1`,
-		s.Kind, s.Location.Lon, s.Location.Lat, kind.MergeRadiusM, box).Scan(&id)
+		s.Kind, s.Location.Lon, s.Location.Lat, kind.MergeRadiusM, box, heading, MaxHeadingDiffDeg).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -343,7 +373,7 @@ func fetchReport(ctx context.Context, tx pgx.Tx, id int64) (Report, error) {
 func scanReport(row pgx.Row) (Report, error) {
 	var r Report
 	err := row.Scan(&r.ID, &r.Location.Lat, &r.Location.Lon, &r.Kind, &r.Notes,
-		&r.Confirmations, &r.CreatedAt, &r.ExpiresAt)
+		&r.HeadingDeg, &r.Confirmations, &r.CreatedAt, &r.ExpiresAt)
 	return r, err
 }
 

@@ -32,13 +32,16 @@ const saturationConstant = 1.5
 
 // Report is a submitted hazard.
 type Report struct {
-	ID            int64      `json:"id"`
-	Location      geo.LatLon `json:"location"`
-	Kind          string     `json:"kind"`
-	Notes         string     `json:"notes,omitempty"`
-	Confirmations int        `json:"confirmations"`
-	CreatedAt     time.Time  `json:"created_at"`
-	ExpiresAt     time.Time  `json:"expires_at"`
+	ID       int64      `json:"id"`
+	Location geo.LatLon `json:"location"`
+	Kind     string     `json:"kind"`
+	Notes    string     `json:"notes,omitempty"`
+	// HeadingDeg is the direction of travel the hazard affects, in degrees
+	// clockwise from north. Absent means both directions.
+	HeadingDeg    *int      `json:"heading_deg,omitempty"`
+	Confirmations int       `json:"confirmations"`
+	CreatedAt     time.Time `json:"created_at"`
+	ExpiresAt     time.Time `json:"expires_at"`
 }
 
 // Index holds the current per-edge hazard scores.
@@ -105,9 +108,19 @@ func (i *Index) Refresh(ctx context.Context, pool *pgxpool.Pool, g *graph.Graph)
 			JOIN routing_edge e
 			  ON e.geom && ST_Expand(h.geom, $2::double precision)
 			 AND ST_DWithin(h.geom::geography, e.geom::geography, $3::double precision)
+			 -- Edges are directed, so a directional hazard can be applied to the
+			 -- lane it is in and not to the opposite one. The edge's bearing is
+			 -- read at whichever end is nearer the hazard, because roads curve.
+			 -- An edge with no bearing, or a hazard with no heading, matches.
+			 AND (h.heading_deg IS NULL
+			      OR NOT (h.kind = ANY($4::text[]))
+			      OR e.bearing_start IS NULL
+			      OR abs(((CASE WHEN ST_LineLocatePoint(e.geom, h.geom) < 0.5
+			                    THEN e.bearing_start ELSE e.bearing_end END)::int
+			               - h.heading_deg + 540) % 360 - 180) <= 90)
 			WHERE h.expires_at > now()
 		) matched
-		GROUP BY edge_id`, kindWeightsJSON(), matchRadiusDeg, float64(MatchRadiusM))
+		GROUP BY edge_id`, kindWeightsJSON(), matchRadiusDeg, float64(MatchRadiusM), directionalKinds())
 	if err != nil {
 		return fmt.Errorf("hazard: querying scores: %w", err)
 	}
@@ -167,4 +180,31 @@ func saturate(x float64) float64 {
 		return 1
 	}
 	return v
+}
+
+// MaxHeadingDiffDeg is how far an edge's direction may differ from a hazard's
+// heading and still be affected by it. Ninety degrees is "roughly the same
+// way": it includes a road that bends a little and excludes the opposite
+// carriageway. The overlay query applies the same rule in SQL.
+const MaxHeadingDiffDeg = 90
+
+// AngleDiff returns the smallest angle between two compass bearings, in
+// degrees, 0..180. Bearings wrap, so 350 and 10 are 20 apart, not 340.
+func AngleDiff(a, b float64) float64 {
+	d := math.Mod(math.Abs(a-b), 360)
+	if d > 180 {
+		d = 360 - d
+	}
+	return d
+}
+
+// directionalKinds lists the kinds whose heading steers routing.
+func directionalKinds() []string {
+	var out []string
+	for _, k := range kinds {
+		if k.Directional {
+			out = append(out, k.Name)
+		}
+	}
+	return out
 }

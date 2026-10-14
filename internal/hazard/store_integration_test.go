@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"math"
 	"os"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/wesishee/viatuta/internal/geo"
+	"github.com/wesishee/viatuta/internal/graph"
 )
 
 // These tests need a migrated Postgres/PostGIS database. They are skipped
@@ -303,4 +306,130 @@ func TestListOmitsResolved(t *testing.T) {
 	if find() {
 		t.Error("a resolved hazard should not be listed")
 	}
+}
+
+func reportHeading(t *testing.T, pool *pgxpool.Pool, user, kind string, p geo.LatLon, heading *float64) (Report, bool) {
+	t.Helper()
+	rep, created, err := Create(context.Background(), pool,
+		Submission{Location: p, Kind: kind, HeadingDeg: heading}, user)
+	if err != nil {
+		t.Fatalf("Create(%s): %v", kind, err)
+	}
+	return rep, created
+}
+
+func TestHeadingIsStoredAndReturned(t *testing.T) {
+	pool := testPool(t)
+	u := newUser(t, pool)
+
+	rep, _ := reportHeading(t, pool, u, "pothole", at(11000), f(359.6))
+	if rep.HeadingDeg == nil || *rep.HeadingDeg != 0 {
+		t.Errorf("heading = %v, want 0 (359.6 rounds through north)", rep.HeadingDeg)
+	}
+	none, _ := reportHeading(t, pool, u, "pothole", at(11500), nil)
+	if none.HeadingDeg != nil {
+		t.Errorf("a report with no heading came back with %d", *none.HeadingDeg)
+	}
+}
+
+func TestDirectionalReportsMergeOnlyWhenFacingTheSameWay(t *testing.T) {
+	pool := testPool(t)
+	a, b, c, d := newUser(t, pool), newUser(t, pool), newUser(t, pool), newUser(t, pool)
+
+	first, _ := reportHeading(t, pool, a, "pothole", at(12000), f(90)) // eastbound
+
+	if _, created := reportHeading(t, pool, b, "pothole", at(12005), f(270)); !created {
+		t.Error("a pothole seen heading west is not the eastbound one")
+	}
+	if rep, created := reportHeading(t, pool, c, "pothole", at(12005), f(100)); created || rep.ID != first.ID {
+		t.Errorf("heading 100 vs 90 should merge (created=%v id=%d want %d)", created, rep.ID, first.ID)
+	}
+	// A bidirectional report is compatible with a directional one, so it merges
+	// into whichever is nearest rather than adding a third marker.
+	if _, created := reportHeading(t, pool, d, "pothole", at(12005), nil); created {
+		t.Error("a bidirectional report next to existing potholes should merge, not create")
+	}
+}
+
+func TestNonDirectionalKindsIgnoreHeadingWhenMerging(t *testing.T) {
+	pool := testPool(t)
+	a, b := newUser(t, pool), newUser(t, pool)
+
+	first, _ := reportHeading(t, pool, a, "road_closed", at(13000), f(90))
+	rep, created := reportHeading(t, pool, b, "road_closed", at(13005), f(270))
+	if created || rep.ID != first.ID {
+		t.Error("a closure is a closure whichever way you were facing")
+	}
+}
+
+// TestOverlayAppliesDirectionalHazardToOneDirectionOnly runs the real overlay
+// query against the real graph: a directional hazard must score the edge it
+// was reported on and leave the opposite carriageway alone.
+func TestOverlayAppliesDirectionalHazardToOneDirectionOnly(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	g, err := graph.Load(ctx, pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Skipf("no routing graph in this database: %v", err)
+	}
+
+	e, r, ok := straightTwoWayEdge(g)
+	if !ok {
+		t.Skip("no suitable two-way edge in the graph")
+	}
+	var lat, lon float64
+	if err := pool.QueryRow(ctx, `
+		SELECT ST_Y(ST_LineInterpolatePoint(geom, 0.5)), ST_X(ST_LineInterpolatePoint(geom, 0.5))
+		FROM routing_edge WHERE id = $1`, g.DBID[e]).Scan(&lat, &lon); err != nil {
+		t.Fatal(err)
+	}
+	where := geo.LatLon{Lat: lat, Lon: lon}
+	heading := float64(g.BearingStart[e])
+
+	score := func(kind string, h *float64) (onE, onReverse float32) {
+		u := newUser(t, pool)
+		rep, created := reportHeading(t, pool, u, kind, where, h)
+		if !created {
+			t.Fatalf("test hazard merged into an existing one (id %d)", rep.ID)
+		}
+		defer pool.Exec(ctx, `DELETE FROM hazard_report WHERE id = $1`, rep.ID) //nolint:errcheck
+
+		idx := NewIndex(g.NumEdges())
+		if err := idx.Refresh(ctx, pool, g); err != nil {
+			t.Fatal(err)
+		}
+		s := idx.Snapshot()
+		return s[e], s[r]
+	}
+
+	if onE, onR := score("pothole", &heading); onE <= 0 || onR != 0 {
+		t.Errorf("directional pothole: score on its own edge = %v (want > 0), on the reverse = %v (want 0)", onE, onR)
+	}
+	if onE, onR := score("pothole", nil); onE <= 0 || onR <= 0 {
+		t.Errorf("a bidirectional pothole should score both directions, got %v and %v", onE, onR)
+	}
+	if onE, onR := score("construction", &heading); onE <= 0 || onR <= 0 {
+		t.Errorf("a non-directional kind should ignore heading, got %v and %v", onE, onR)
+	}
+}
+
+// straightTwoWayEdge finds a long, nearly straight edge that has a reverse
+// edge, so "same direction" and "opposite direction" are unambiguous.
+func straightTwoWayEdge(g *graph.Graph) (e, reverse int32, ok bool) {
+	for i := int32(0); int(i) < g.NumEdges(); i++ {
+		if g.LengthM[i] < 60 || g.BearingStart[i] == 0 && g.BearingEnd[i] == 0 {
+			continue
+		}
+		if AngleDiff(float64(g.BearingStart[i]), float64(g.BearingEnd[i])) > 15 {
+			continue
+		}
+		start, end := g.OutEdges(g.To[i])
+		for j := start; j < end; j++ {
+			if g.IsReverseOf(i, j) {
+				return i, j, true
+			}
+		}
+	}
+	return 0, 0, false
 }
