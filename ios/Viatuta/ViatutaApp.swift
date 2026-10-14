@@ -2,9 +2,12 @@ import SwiftUI
 
 @main
 struct ViatutaApp: App {
+    @State private var auth = AuthStore()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environment(auth)
         }
     }
 }
