@@ -1,13 +1,41 @@
 import MapKit
 import SwiftUI
 
+/// A spot the rider has dropped to report a hazard at.
+struct HazardPin: Identifiable {
+    let id = UUID()
+    let coordinate: CLLocationCoordinate2D
+}
+
+/// The one sheet the map screen can have up at a time.
+enum ActiveSheet: Identifiable {
+    case saved
+    case reportHazard(HazardPin)
+    case hazard(HazardReport)
+
+    var id: String {
+        switch self {
+        case .saved: "saved"
+        case .reportHazard(let pin): "report-\(pin.id)"
+        case .hazard(let hazard): "hazard-\(hazard.id)"
+        }
+    }
+}
+
 struct ContentView: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(HazardService.self) private var hazardService
     @State private var planner: RoutePlanner
     @State private var position: MapCameraPosition = .region(.austin)
-    @State private var showingSaved = false
+    @State private var sheet: ActiveSheet?
     @State private var showingSaveAlert = false
     @State private var routeName = ""
+
+    /// While true, the next tap on the map places a hazard instead of a route
+    /// waypoint.
+    @State private var isPlacingHazard = false
+    @State private var hazardPin: HazardPin?
+    @State private var toast: String?
 
     init(api: APIClient) {
         _planner = State(initialValue: RoutePlanner(api: api))
@@ -34,22 +62,39 @@ struct ContentView: View {
                 if let destination = planner.destination {
                     Marker("End", coordinate: destination).tint(.red)
                 }
+
+                ForEach(hazardService.hazards) { hazard in
+                    Annotation("", coordinate: hazard.coordinate, anchor: .center) {
+                        HazardBadge(hazard: hazard, kind: hazardService.kind(named: hazard.kind))
+                            .onTapGesture {
+                                // Tapping an existing hazard while reporting is
+                                // most likely "this one is already there": show it.
+                                isPlacingHazard = false
+                                sheet = .hazard(hazard)
+                            }
+                    }
+                }
+                if let pin = hazardPin {
+                    Marker("Hazard", systemImage: "exclamationmark.triangle.fill", coordinate: pin.coordinate)
+                        .tint(HazardBadge.hazardColor)
+                }
             }
             .onTapGesture { point in
-                if let coordinate = proxy.convert(point, from: .local) {
+                guard let coordinate = proxy.convert(point, from: .local) else { return }
+                if isPlacingHazard {
+                    isPlacingHazard = false
+                    let pin = HazardPin(coordinate: coordinate)
+                    hazardPin = pin
+                    sheet = .reportHazard(pin)
+                } else {
                     planner.tap(coordinate)
                 }
             }
-        }
-        .overlay(alignment: .top) {
-            HStack {
-                Button("Saved", systemImage: "bookmark") { showingSaved = true }
-                    .buttonStyle(.borderedProminent)
-                Spacer()
-                Button("Sign out", action: auth.signOut).buttonStyle(.borderedProminent)
+            .onMapCameraChange(frequency: .onEnd) { context in
+                Task { await hazardService.refresh(in: context.region) }
             }
-            .padding()
         }
+        .overlay(alignment: .top) { topBar }
         .safeAreaInset(edge: .bottom) {
             RouteSummaryCard(planner: planner) {
                 routeName = ""
@@ -66,14 +111,76 @@ struct ContentView: View {
         } message: {
             Text("Give this route a name, like “Commute”.")
         }
-        .sheet(isPresented: $showingSaved) {
-            SavedRoutesView(api: auth.api) { planner.show($0) }
+        .sheet(item: $sheet, onDismiss: { hazardPin = nil }) { active in
+            switch active {
+            case .saved:
+                SavedRoutesView(api: auth.api) { planner.show($0) }
+            case .reportHazard(let pin):
+                ReportHazardSheet(coordinate: pin.coordinate) { outcome in
+                    show(outcome.merged
+                         ? "Someone already reported this here, so yours counted as a confirmation."
+                         : "Reported. Routing already knows.")
+                }
+            case .hazard(let hazard):
+                HazardDetailSheet(hazard: hazard)
+            }
+        }
+        .task {
+            await hazardService.loadKinds()
+            // The camera-change callback covers later pans and zooms; this
+            // covers the first screen, before the rider has touched the map.
+            await hazardService.refresh(in: .austin)
         }
         .onChange(of: planner.route == nil) { _, isNil in
             if !isNil, let route = planner.route { fit(route.coordinates) }
         }
         .onChange(of: planner.savedRoute?.id) { _, id in
             if id != nil, let saved = planner.savedRoute { fit(saved.coordinates) }
+        }
+    }
+
+    // MARK: Top bar
+
+    private var topBar: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Button("Saved", systemImage: "bookmark") { sheet = .saved }
+                    .buttonStyle(.borderedProminent)
+                Button("Report", systemImage: "exclamationmark.triangle") {
+                    isPlacingHazard.toggle()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(isPlacingHazard ? .gray : HazardBadge.hazardColor)
+                .accessibilityIdentifier("reportHazardButton")
+                Spacer()
+                Button("Sign out", action: auth.signOut).buttonStyle(.borderedProminent)
+            }
+
+            if isPlacingHazard {
+                banner("Tap the map where the hazard is", id: "hazardPlacementBanner")
+            } else if let toast {
+                banner(toast, id: "hazardToast")
+            }
+        }
+        .padding()
+    }
+
+    private func banner(_ text: String, id: String) -> some View {
+        Text(text)
+            .font(.footnote.weight(.medium))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: Capsule())
+            .accessibilityIdentifier(id)
+    }
+
+    /// Shows a short message over the map, then clears it.
+    private func show(_ message: String) {
+        toast = message
+        Task {
+            try? await Task.sleep(for: .seconds(6))
+            if toast == message { toast = nil }
         }
     }
 

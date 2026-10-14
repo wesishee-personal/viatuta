@@ -141,7 +141,7 @@ final class SavedRouteAPITests: XCTestCase {
     }
 }
 
-private extension URLRequest {
+extension URLRequest {
     /// URLProtocol sees bodies as a stream, not `httpBody`.
     func bodyData() -> Data {
         if let httpBody { return httpBody }

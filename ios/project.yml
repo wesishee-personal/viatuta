@@ -38,6 +38,16 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.viatuta.ViatutaTests
     dependencies:
       - target: Viatuta
+  ViatutaUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [ViatutaUITests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: app.viatuta.ViatutaUITests
+    dependencies:
+      - target: Viatuta
 schemes:
   Viatuta:
     build:
@@ -45,3 +55,12 @@ schemes:
         Viatuta: all
     test:
       targets: [ViatutaTests]
+  # UI tests drive the whole app against a running API, so they are slow and
+  # need `docker compose up`. They have their own scheme to stay out of the
+  # normal `Viatuta` test run.
+  ViatutaUITests:
+    build:
+      targets:
+        Viatuta: all
+    test:
+      targets: [ViatutaUITests]
