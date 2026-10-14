@@ -1,5 +1,6 @@
 import type { ApiError, NetworkError } from '../api/client';
 import type { LatLon, PlanResponse, ProfileName } from '../api/types';
+import { AccountMenu } from '../auth/AccountMenu';
 import type { Units } from '../lib/format';
 import type { Selection } from '../state/selection';
 import type { PlanSettings, PlanStatus } from '../state/usePlan';
@@ -42,14 +43,17 @@ export function PlanPanel(props: Props) {
           <h1>Viatuta</h1>
           <p className="tagline">Safer cycling routes for Austin</p>
         </div>
-        <button
-          type="button"
-          className="units"
-          onClick={() => props.onUnits(units === 'metric' ? 'imperial' : 'metric')}
-          title="Switch units"
-        >
-          {units === 'metric' ? 'km' : 'mi'}
-        </button>
+        <div className="panel__actions">
+          <AccountMenu />
+          <button
+            type="button"
+            className="units"
+            onClick={() => props.onUnits(units === 'metric' ? 'imperial' : 'metric')}
+            title="Switch units"
+          >
+            {units === 'metric' ? 'km' : 'mi'}
+          </button>
+        </div>
       </header>
 
       <Endpoints {...props} />

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { LatLon } from './api/types';
+import { useAuth } from './auth/AuthContext';
 import { HazardPopup } from './hazards/HazardPopup';
 import { ReportHazardForm } from './hazards/ReportHazardForm';
 import type { Units } from './lib/format';
@@ -14,6 +15,7 @@ import { useHazards } from './state/useHazards';
 import { usePlan } from './state/usePlan';
 
 export default function App() {
+  const { requireAuth } = useAuth();
   const [origin, setOrigin] = useState<LatLon | null>(null);
   const [destination, setDestination] = useState<LatLon | null>(null);
   const [units, setUnits] = useState<Units>('imperial');
@@ -107,8 +109,14 @@ export default function App() {
         onToggleGhost={setShowGhost}
         reporting={reporting}
         onToggleReporting={() => {
-          setReporting((v) => !v);
           setPendingHazard(null);
+          if (reporting) {
+            setReporting(false);
+            return;
+          }
+          // Reports need an account, so ask before the rider drops a pin
+          // rather than after they have filled in the form.
+          requireAuth(() => setReporting(true), 'report a hazard');
         }}
         selection={selection}
         onSelect={setSelection}

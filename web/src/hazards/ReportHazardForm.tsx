@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Popup } from 'react-map-gl/mapbox';
-import { reportHazard } from '../api/client';
+import { ApiError, reportHazard } from '../api/client';
 import { HAZARD_KINDS, HAZARD_LABELS, HAZARD_NOTES_MAX } from '../api/types';
 import type { HazardKind, LatLon } from '../api/types';
 
@@ -33,7 +33,13 @@ export function ReportHazardForm({ location, onCancel, onReported }: Props) {
       await reportHazard(trimmed ? { location, kind, notes: trimmed } : { location, kind });
       onReported();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'could not submit the report');
+      setError(
+        err instanceof ApiError && err.status === 401
+          ? 'Your session has expired. Sign in again to report.'
+          : err instanceof Error
+            ? err.message
+            : 'could not submit the report',
+      );
       setBusy(false);
     }
   }

@@ -196,6 +196,24 @@ export interface HazardListResponse {
 // Errors and health
 // ---------------------------------------------------------------------------
 
+/** internal/auth/store.go:22 */
+export interface AuthUser {
+  id: string;
+  email: string;
+  display_name?: string;
+  created_at: string;
+}
+
+/** internal/httpapi/user_handler.go:25 */
+export interface AuthResponse {
+  token: string;
+  expires_at: string;
+  user: AuthUser;
+}
+
+/** internal/auth/password.go:28 */
+export const PASSWORD_MIN_LENGTH = 10;
+
 /** internal/httpapi/errors.go:23. Clients branch on `code`, never on wording. */
 export type ErrorCode =
   | 'bad_request'

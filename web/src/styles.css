@@ -79,6 +79,12 @@ p { margin: 0 0 8px; }
   z-index: 2;
 }
 
+.panel__actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+.account { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; }
+.account button { white-space: nowrap; }
+.account__who { color: var(--fg-dim); max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .tagline { margin: 2px 0 0; font-size: 13px; color: var(--fg-dim); }
 
 .panel__body { display: flex; flex-direction: column; gap: 22px; flex: 1; }
@@ -373,3 +379,27 @@ button.link {
 .hazard-popup__done { color: var(--good); font-size: 13px; margin: 8px 0 0; }
 .hazard-popup button { margin-top: 8px; }
 .hazard-popup .mapboxgl-popup-close-button { color: var(--fg-dim); font-size: 18px; }
+
+/* ---- Sign-in dialog ---------------------------------------------------- */
+
+.auth-dialog {
+  width: min(380px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.auth-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.auth-dialog h2 { margin: 0 0 6px; font-size: 18px; }
+.auth-dialog .field input {
+  width: 100%;
+  font: inherit;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.auth-dialog .field .hint { display: block; font-style: normal; margin-top: 3px; }
+.auth-dialog__error { color: var(--bad); font-size: 13px; margin: 4px 0 0; }

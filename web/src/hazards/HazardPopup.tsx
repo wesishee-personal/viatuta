@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Popup } from 'react-map-gl/mapbox';
 import { confirmHazard } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
 import type { HazardReport } from '../api/types';
 import { HAZARD_LABELS } from '../api/types';
 import type { HazardKind } from '../api/types';
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export function HazardPopup({ hazard, onClose, onConfirmed }: Props) {
+  const { requireAuth } = useAuth();
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -54,7 +56,12 @@ export function HazardPopup({ hazard, onClose, onConfirmed }: Props) {
       {done ? (
         <p className="hazard-popup__done">Thanks — routing already knows.</p>
       ) : (
-        <button type="button" className="primary" disabled={busy} onClick={() => void confirm()}>
+        <button
+          type="button"
+          className="primary"
+          disabled={busy}
+          onClick={() => requireAuth(() => void confirm(), 'confirm a hazard')}
+        >
           {busy ? 'Confirming…' : "It's still there"}
         </button>
       )}
