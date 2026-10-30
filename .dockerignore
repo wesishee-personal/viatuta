@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+.env.example
+bin/
+data/
+docs/
+*.md
+web/node_modules
+web/dist
+ios/

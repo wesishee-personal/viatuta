@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:18-3.6
+        env:
+          POSTGRES_DB: viatuta_test
+          POSTGRES_USER: viatuta
+          POSTGRES_PASSWORD: viatuta
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U viatuta -d viatuta_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      VIATUTA_TEST_DATABASE_URL: postgres://viatuta:viatuta@localhost:5432/viatuta_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Apply migrations
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@latest
+          goose -dir db/migrations postgres "$VIATUTA_TEST_DATABASE_URL" up
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test ./...
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run build
